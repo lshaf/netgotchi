@@ -49,7 +49,8 @@ void SlimePet::update(uint32_t ms) {
         } else if (_nowMs < _wallPauseEnd) {
             // Paused at corner — hold position, frames still advance
         } else {
-            _x += _walkDir * 2.8f;
+            float speed = _stayRight ? 15.0f : 2.8f;
+            _x += _walkDir * speed;
             if (_x > rBound) {
                 _x = (float)rBound;
                 if (!_stayRight) { _walkDir = -1; _wallPauseEnd = _nowMs + 1000; }
