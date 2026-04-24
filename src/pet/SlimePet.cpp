@@ -5,7 +5,6 @@
 #include <cstring>
 
 static constexpr uint16_t FRAME_MS[] = { 100, 115, 250, 310 };
-static constexpr uint32_t SPEECH_DUR = 3000;  // ms a speech bubble stays up
 
 // ── Construction ──────────────────────────────────────────────
 
@@ -15,19 +14,22 @@ SlimePet::SlimePet() : _x(SCREEN_W / 2.0f) {}
 
 void SlimePet::setAnim(Anim a) {
     if (_anim == a) return;
-    _anim   = a;
-    _frame  = 0;
-    _lastMs = 0;
+    _anim         = a;
+    _frame        = 0;
+    _lastMs       = 0;
+    _wallPauseEnd = 0;
 }
 
 void SlimePet::setSpeech(const char* msg) {
     _speech      = msg;
-    _speechStart = 0;  // re-arm: will be set to _nowMs on next update tick
+    _speechStart = 0;
 }
 
 void SlimePet::update(uint32_t ms) {
     _nowMs = ms;
     if (_speech && _speechStart == 0) _speechStart = ms;
+    if (_speech && _speechStart > 0 && (ms - _speechStart) >= SPEECH_DUR)
+        _speech = nullptr;
 
     uint32_t iv = FRAME_MS[static_cast<uint8_t>(_anim)];
     if (ms - _lastMs < iv) return;
@@ -35,15 +37,30 @@ void SlimePet::update(uint32_t ms) {
     _frame++;
 
     if (_anim == Anim::Walk) {
-        _x += _walkDir * 0.7f;
-        if (_x > SCREEN_W * 3 / 4) {
-            _x = SCREEN_W * 3 / 4;
-            if (!_stayRight) _walkDir = -1;
+        const int su     = SCREEN_H / 10;
+        const int bW     = su + su / 4;
+        const int rBound = SCREEN_W - bW - 2;
+        const int lBound = bW + 2;
+
+        if (_pinCenter) {
+            // Attack mode: snap to center, use Walk frames for jump arc
+            float dx = SCREEN_W / 2.0f - _x;
+            if (fabsf(dx) > 2.0f) _x += dx * 0.2f;
+        } else if (_nowMs < _wallPauseEnd) {
+            // Paused at corner — hold position, frames still advance
+        } else {
+            _x += _walkDir * 2.8f;
+            if (_x > rBound) {
+                _x = (float)rBound;
+                if (!_stayRight) { _walkDir = -1; _wallPauseEnd = _nowMs + 1000; }
+            }
+            if (_x < lBound) { _x = (float)lBound; _walkDir = 1; _wallPauseEnd = _nowMs + 1000; }
         }
-        if (_x < SCREEN_W / 4) { _x = SCREEN_W / 4; _walkDir = 1; }
     } else {
-        float dx = SCREEN_W / 2.0f - _x;
-        if (fabsf(dx) > 1.5f) _x += dx * 0.12f;
+        if (!_stayRight) {
+            float dx = SCREEN_W / 2.0f - _x;
+            if (fabsf(dx) > 6.0f) _x += dx * 0.12f;
+        }
     }
 }
 
@@ -51,12 +68,8 @@ void SlimePet::draw(M5Canvas& c) const {
     Visual v = _currentVisual();
     _renderBody(c, v);
     _renderEyes(c, v);
-    _renderMouth(c, v);
     if (v.thinkR > 0) _renderThinkBubble(c, v);
-    if (_speech && _speechStart > 0 && (_nowMs - _speechStart) < SPEECH_DUR)
-        _renderSpeechBubble(c, v);
-    else if (_speech && _speechStart > 0)
-        _speech = nullptr;  // expired
+    _renderSpeechBubble(c, v);
 }
 
 // ── Frame generators ──────────────────────────────────────────
@@ -71,15 +84,15 @@ SlimePet::Visual SlimePet::_currentVisual() const {
 }
 
 SlimePet::Visual SlimePet::_idleVisual() const {
-    const int su = SCREEN_H / 7, s_b = su + su / 4;
-    static const int8_t YO[] = { 0, 0,-1,-1, 0, 0, 1, 1 };
+    const int su = SCREEN_H / 10, s_b = su + su / 4;
+    static const int8_t YO[] = { 0, 0,-4,-4, 0, 0, 4, 4 };
     int fi = _frame % 8;
     uint8_t eyeState = (fi == 5) ? 1 : (fi == 6) ? 2 : 0;
     return { (int)_x, GROUND_Y - s_b + YO[fi], s_b, s_b, 1, 1, eyeState, 0, 0 };
 }
 
 SlimePet::Visual SlimePet::_walkVisual() const {
-    const int su = SCREEN_H / 7, s_b = su + su / 4;
+    const int su = SCREEN_H / 10, s_b = su + su / 4;
     static const int8_t YF[] = { 0,-1,-3,-1, 0,-1,-3,-1 };
     int fi = _frame % 8;
     int yo = YF[fi] * su / 3;
@@ -87,17 +100,17 @@ SlimePet::Visual SlimePet::_walkVisual() const {
 }
 
 SlimePet::Visual SlimePet::_talkVisual() const {
-    const int su = SCREEN_H / 7, s_b = su + su / 4;
+    const int su = SCREEN_H / 10, s_b = su + su / 4;
     static const uint8_t MOUTH[] = { 0, 1, 2, 2, 1, 0 };
-    static const int8_t  YO[]    = { 0, 0,-1,-1, 0, 0 };
+    static const int8_t  YO[]    = { 0, 0,-4,-4, 0, 0 };
     int fi = _frame % 6;
     return { (int)_x, GROUND_Y - s_b + YO[fi], s_b, s_b, 1, 1, 0, MOUTH[fi], 0 };
 }
 
 SlimePet::Visual SlimePet::_thinkVisual() const {
-    const int su = SCREEN_H / 7, s_b = su + su / 4;
+    const int su = SCREEN_H / 10, s_b = su + su / 4;
     int fi = _frame % 10;
-    uint8_t r = (fi < 5) ? static_cast<uint8_t>(fi) : 5;
+    uint8_t r = (fi < 5) ? static_cast<uint8_t>(fi * 3) : 15;
     return { (int)_x, GROUND_Y - s_b, s_b, s_b, 1, -1, 0, 0, r };
 }
 
@@ -109,68 +122,65 @@ void SlimePet::_renderBody(M5Canvas& c, const Visual& v) const {
     int w  = 2 * v.bW;
     int h  = 2 * v.bH;
 
-    c.fillRect(v.cx - v.bW * 3 / 4, GROUND_Y, v.bW * 3 / 2, 2, Palette::Shadow);
+    c.fillRect(v.cx - v.bW * 3 / 4, GROUND_Y, v.bW * 3 / 2, 6, Palette::Shadow);
     c.fillRect(x0, y0, w, h, Palette::SlimeBody);
-    c.fillRect(x0 + 1, y0 + h * 3 / 4, w - 2, h / 4, Palette::SlimeDark);
-    c.fillRect(x0 + 2, y0 + 2, v.bW / 3, v.bH / 3, Palette::SlimeLight);
+    c.fillRect(x0 + 4, y0 + h * 3 / 4, w - 8, h / 4, Palette::SlimeDark);
+    c.fillRect(x0 + 6, y0 + 6, v.bW / 3, v.bH / 3, Palette::SlimeLight);
 }
 
 void SlimePet::_renderEyes(M5Canvas& c, const Visual& v) const {
     int eY  = v.cy - v.bH / 3;
     int eLX = v.cx - v.bW / 3;
     int eRX = v.cx + v.bW / 3;
-    int eS  = SCREEN_H / 14;  // == SU / 2
+
+    const int eW = 6;   // eye-white width
+    const int eH = 8;   // eye-white height
+    const int pW = 4;   // pupil width
+    const int pH = 6;   // pupil height
 
     if (v.eyeState == 2) {
-        c.fillRect(eLX - eS, eY, 2 * eS, 1, Palette::Black);
-        c.fillRect(eRX - eS, eY, 2 * eS, 1, Palette::Black);
+        // Squinting — thin horizontal bar across eye width
+        c.fillRect(eLX - eW / 2, eY - 1, eW, 2, Palette::Black);
+        c.fillRect(eRX - eW / 2, eY - 1, eW, 2, Palette::Black);
         return;
     }
 
-    int eH = (v.eyeState == 1) ? 1 : eS;
-    c.fillRect(eLX - eS, eY - eH / 2, 2 * eS, eH, Palette::White);
-    c.fillRect(eRX - eS, eY - eH / 2, 2 * eS, eH, Palette::White);
+    if (v.eyeState == 1) {
+        // Half-closed — show only bottom half of eye white
+        c.fillRect(eLX - eW / 2, eY, eW, eH / 2, Palette::White);
+        c.fillRect(eLX - pW / 2, eY + eH / 2 - pW / 2, pW, pW, Palette::Black);
 
-    int px = constrain(v.eyeX, -1, 1);
-    int py = constrain(v.eyeY, -1, 1);
-    int pS = (eS >= 3) ? 2 : 1;
-    c.fillRect(eLX + px - pS / 2, eY + py - pS / 2, pS, pS, Palette::Black);
-    c.fillRect(eRX + px - pS / 2, eY + py - pS / 2, pS, pS, Palette::Black);
-    c.drawPixel(eLX + px + pS / 2, eY + py - pS / 2, Palette::White);
-    c.drawPixel(eRX + px + pS / 2, eY + py - pS / 2, Palette::White);
-}
-
-void SlimePet::_renderMouth(M5Canvas& c, const Visual& v) const {
-    int mY  = v.cy + v.bH / 3;
-    int mW  = v.bW;
-    int mX0 = v.cx - mW / 2;
-
-    switch (v.mouthH) {
-        case 0:
-            c.fillRect(mX0, mY, mW, 2, Palette::Black);
-            break;
-        case 1:
-            c.fillRect(mX0 + mW / 4, mY, mW / 2, 3, Palette::Black);
-            break;
-        default:
-            c.fillRect(mX0, mY, mW, 4, Palette::Black);
-            c.fillRect(mX0 + 1,      mY, 2, 2, Palette::White);
-            c.fillRect(mX0 + mW / 2, mY, 2, 2, Palette::White);
-            break;
+        c.fillRect(eRX - eW / 2, eY, eW, eH / 2, Palette::White);
+        c.fillRect(eRX - pW / 2, eY + eH / 2 - pW / 2, pW, pW, Palette::Black);
+        return;
     }
+
+    // Open — tall rectangular eye whites (2 wide : 3 tall)
+    c.fillRect(eLX - eW / 2, eY - eH / 2, eW, eH, Palette::White);
+    c.fillRect(eRX - eW / 2, eY - eH / 2, eW, eH, Palette::White);
+
+    int px = constrain(v.eyeX, -1, 1) * 2;
+    int py = constrain(v.eyeY, -1, 1) * 2;
+    c.fillRect(eLX - pW / 2 + px, eY - pH / 2 + py, pW, pH, Palette::Black);
+    c.fillRect(eRX - pW / 2 + px, eY - pH / 2 + py, pW, pH, Palette::Black);
+
+    // Highlight — 2×2 dot top-right of each pupil
+    c.fillRect(eLX + px + pW / 2 - 2, eY - pH / 2 + py, 2, 2, Palette::White);
+    c.fillRect(eRX + px + pW / 2 - 2, eY - pH / 2 + py, 2, 2, Palette::White);
 }
+
 
 void SlimePet::_renderThinkBubble(M5Canvas& c, const Visual& v) const {
-    int bx = v.cx + v.bW + 5;
-    int by = v.cy - v.bH - 4;
+    int bx = v.cx + v.bW + 20;
+    int by = v.cy - v.bH - 12;
 
-    c.fillCircle(v.cx + v.bW / 2 + 1, v.cy - v.bH / 3,   1, Palette::Bubble);
-    c.fillCircle(v.cx + v.bW / 2 + 2, v.cy - v.bH * 2/3, 1, Palette::Bubble);
-    c.fillCircle(v.cx + v.bW / 2 + 4, v.cy - v.bH - 1,   2, Palette::Bubble);
+    c.fillCircle(v.cx + v.bW / 2 + 4,  v.cy - v.bH / 3,   3, Palette::Bubble);
+    c.fillCircle(v.cx + v.bW / 2 + 8,  v.cy - v.bH * 2/3, 3, Palette::Bubble);
+    c.fillCircle(v.cx + v.bW / 2 + 14, v.cy - v.bH - 3,   6, Palette::Bubble);
     c.fillCircle(bx, by, v.thinkR, Palette::Bubble);
     c.drawCircle(bx, by, v.thinkR, Palette::BubbleBdr);
 
-    if (v.thinkR >= 4) {
+    if (v.thinkR >= 12) {
         c.setTextColor(Palette::BubbleTxt, Palette::Bubble);
         c.setTextDatum(lgfx::middle_center);
         c.setTextSize(1);
@@ -179,36 +189,71 @@ void SlimePet::_renderThinkBubble(M5Canvas& c, const Visual& v) const {
 }
 
 void SlimePet::_renderSpeechBubble(M5Canvas& c, const Visual& v) const {
-    if (!_speech) return;
+    if (!speechActive()) return;
 
-    // Bubble sits above the body with a small tail pointing down-center
-    // Width is dynamic: measured from text so longer messages fit naturally
     c.setFont(&fonts::Font0);
     c.setTextSize(1);
-    int bH   = 10;
-    int bW   = (int)c.textWidth(_speech) + 8;
-    if (bW > SCREEN_W - 2) bW = SCREEN_W - 2;
-    if (bW < 28)            bW = 28;
-    int bX   = v.cx - bW / 2;
-    int bY   = v.cy - v.bH - bH - 4;
 
-    // Clamp to stay inside canvas (above BTN_STRIP)
-    if (bX < 1) bX = 1;
-    if (bX + bW > SCREEN_W - 1) bX = SCREEN_W - bW - 1;
-    if (bY < BTN_STRIP + 1) bY = BTN_STRIP + 1;
+    const int cx   = v.cx;
+    const int topY = v.cy - v.bH;
+    const int pad  = 4;
+    const int lineH = 9;
+    const int maxW  = SCREEN_W - 8 - pad * 2;
 
-    // Background + border
+    char lines[3][24] = {};
+    int  nLines = 0;
+    char cur[24] = {};
+
+    for (const char* p = _speech; *p && nLines < 3; ) {
+        char word[24] = {};
+        int  wi = 0;
+        while (*p && *p != ' ' && wi < 23) word[wi++] = *p++;
+        if (*p == ' ') ++p;
+
+        char test[48] = {};
+        if (cur[0]) snprintf(test, sizeof(test), "%s %s", cur, word);
+        else        snprintf(test, sizeof(test), "%s",    word);
+
+        if ((int)c.textWidth(test) <= maxW) {
+            strncpy(cur, test, sizeof(cur) - 1);
+        } else {
+            if (cur[0]) strncpy(lines[nLines++], cur, 23);
+            strncpy(cur, word, sizeof(cur) - 1);
+        }
+    }
+    if (cur[0] && nLines < 3) strncpy(lines[nLines++], cur, 23);
+    if (nLines == 0) return;
+
+    int textW = 0;
+    for (int i = 0; i < nLines; i++) {
+        int w = (int)c.textWidth(lines[i]);
+        if (w > textW) textW = w;
+    }
+
+    int bW = textW + pad * 2 + 2;
+    int bH = nLines * lineH + pad * 2 - 1;
+    if (bW < 40)            bW = 40;
+    if (bW > SCREEN_W - 4)  bW = SCREEN_W - 4;
+
+    int bX = cx - bW / 2;
+    int bY = topY - bH - 6;
+    if (bX < 2)                 bX = 2;
+    if (bX + bW > SCREEN_W - 2) bX = SCREEN_W - bW - 2;
+    if (bY < BTN_STRIP + 2)     bY = BTN_STRIP + 2;
+
     c.fillRect(bX, bY, bW, bH, Palette::Bubble);
     c.drawRect(bX, bY, bW, bH, Palette::BubbleBdr);
 
-    // Tail: 2-pixel notch at bottom-center pointing toward slime
-    int tailX = v.cx - 1;
-    if (tailX < bX + 1) tailX = bX + 1;
-    if (tailX > bX + bW - 3) tailX = bX + bW - 3;
-    c.fillRect(tailX, bY + bH, 2, 2, Palette::Bubble);
+    int tailX = cx;
+    if (tailX < bX + 2)       tailX = bX + 2;
+    if (tailX > bX + bW - 3)  tailX = bX + bW - 3;
+    c.fillRect(tailX - 1, bY + bH, 3, 4, Palette::Bubble);
 
-    // Text (font+size already set above for textWidth measurement)
-    c.setTextDatum(lgfx::middle_center);
     c.setTextColor(Palette::BubbleTxt, Palette::Bubble);
-    c.drawString(_speech, bX + bW / 2, bY + bH / 2);
+    c.setTextDatum(lgfx::top_left);
+    for (int i = 0; i < nLines; i++) {
+        int lw = (int)c.textWidth(lines[i]);
+        int lx = bX + (bW - lw) / 2;
+        c.drawString(lines[i], lx, bY + pad + i * lineH);
+    }
 }

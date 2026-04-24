@@ -286,11 +286,7 @@ void WiFiHunter::_processBeacon(const RawFrame& f) {
                       bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
                       f.channel, ssid);
 
-        if (_pcapExists(*ap)) {
-            ap->validated   = true;
-            ap->pcapCreated = true;
-            Serial.printf("[AP] Already captured, skipping: \"%s\"\n", ap->ssid);
-        }
+        // skip-capture disabled for testing
     }
 }
 
@@ -323,12 +319,7 @@ void WiFiHunter::_processEapol(const RawFrame& f) {
         ap = _registerAp(bssid);
         if (!ap) return;
         ap->channel = f.channel;
-        if (_pcapExists(*ap)) {
-            ap->validated   = true;
-            ap->pcapCreated = true;
-            Serial.printf("[EAPOL] Already captured, skipping\n");
-            return;
-        }
+        // skip-capture disabled for testing
     }
     if (ap->validated) return;
 
@@ -549,4 +540,48 @@ bool WiFiHunter::_pcapExists(const ApInfo& ap) {
     char path[64];
     _buildFilePath(path, sizeof(path), ap);
     return SD.exists(path);
+}
+
+bool WiFiHunter::_pcapIsComplete(const ApInfo& ap) {
+    char path[64];
+    _buildFilePath(path, sizeof(path), ap);
+
+    File f = SD.open(path, FILE_READ);
+    if (!f) return false;
+
+    if ((uint32_t)f.size() <= sizeof(PcapGlobalHdr)) { f.close(); return false; }
+    f.seek(sizeof(PcapGlobalHdr));
+
+    uint8_t  staMacAnonce[6] = {};
+    uint8_t  staMacM2[6]     = {};
+    bool     hasAnonce        = false;
+    bool     hasM2            = false;
+    uint8_t  buf[MAX_FRAME];
+
+    while ((uint32_t)f.available() >= sizeof(PcapRecHdr)) {
+        PcapRecHdr rec;
+        if (f.read(reinterpret_cast<uint8_t*>(&rec), sizeof(rec)) != sizeof(rec)) break;
+
+        uint32_t toRead = (rec.incl_len <= MAX_FRAME) ? rec.incl_len : MAX_FRAME;
+        uint32_t nRead  = f.read(buf, toRead);
+        if (rec.incl_len > toRead) f.seek(f.position() + (rec.incl_len - toRead));
+        if (nRead < toRead) break;
+
+        int msg = _parseEapolMsg(buf, (uint16_t)nRead, nullptr);
+        if (msg == 1 || msg == 3) {
+            memcpy(staMacAnonce, buf + 4, 6);   // addr1 = DA = STA (AP→STA)
+            hasAnonce = true;
+        } else if (msg == 2) {
+            memcpy(staMacM2,     buf + 10, 6);  // addr2 = SA = STA (STA→AP)
+            hasM2 = true;
+        }
+
+        if (hasAnonce && hasM2 && memcmp(staMacAnonce, staMacM2, 6) == 0) {
+            f.close();
+            return true;
+        }
+    }
+
+    f.close();
+    return false;
 }

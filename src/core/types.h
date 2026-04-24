@@ -1,14 +1,11 @@
 #pragma once
 #include <cstdint>
 
-// Virtual canvas: always 80px wide. Height and scale are set at runtime
-// by App::init() once M5.Display dimensions are known.
-static constexpr int SCREEN_W = 80;
-
-extern int SCALE;      // physW / SCREEN_W
-extern int SCREEN_H;   // physH / SCALE
-extern int BTN_STRIP;  // HUD bar height (~18% of SCREEN_H)
-extern int GROUND_Y;   // ground surface y   (~90% of SCREEN_H)
+// CoreS3: 320×240 native, no scaling layer
+static constexpr int SCREEN_W  = 320;
+static constexpr int SCREEN_H  = 240;
+static constexpr int BTN_STRIP = 36;   // HUD height in physical px
+static constexpr int GROUND_Y  = 216;  // ground y in physical px
 
 // ── Animation states ──────────────────────────────────────────
 enum class Anim : uint8_t {

@@ -69,7 +69,8 @@ private:
     void _writePcapHeader(File& f);
     void _appendPcapFrame(File& f, const uint8_t* data, uint16_t len);
     void _buildFilePath(char* buf, int bufLen, const ApInfo& ap);
-    bool _pcapExists(const ApInfo& ap);
+    bool _pcapExists    (const ApInfo& ap);
+    bool _pcapIsComplete(const ApInfo& ap);   // true only if M1/M3 + M2 pair found
 
     // EAPOL message classifier: returns 1=M1, 2=M2, 3=M3, 4=M4, 0=unknown
     static int _parseEapolMsg(const uint8_t* data, uint16_t len, int* snapOffOut);
