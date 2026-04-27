@@ -311,54 +311,61 @@ void App::_handleTouch(uint32_t ms) {
 
     if (_menuOpen) {
         constexpr int PAX = 40, PAY = 30, PAW = 240, PAH = 180;
-        constexpr int PX  = PAX + 1, PW = PAW - 2;
+        constexpr int PAD    = 8;
+        constexpr int CX     = PAX + PAD;            // 48
+        constexpr int CR     = PAX + PAW - PAD;      // 272
         constexpr int TAB_H  = 22;
-        constexpr int CONT_Y = PAY + 1 + TAB_H;   // 53
-        constexpr int CLOSE_H = 24;
-        constexpr int CLOSE_Y = PAY + PAH - CLOSE_H - 1;  // 185
-        constexpr int AW = 20, RH = 22;
+        constexpr int CONT_Y = PAY + 1 + TAB_H;      // 53
+        constexpr int ROW_H  = 22;
+        constexpr int AW     = 22;
+        constexpr int LBL_W  = 44;
+        constexpr int BTN_L  = CX + LBL_W;           // 92
+        constexpr int BTN_R  = CR - AW;              // 250
+        constexpr int CLOSE_H = 22;
+        constexpr int CLOSE_Y = PAY + PAH - 1 - CLOSE_H; // 187
+        constexpr int PWR_Y   = CLOSE_Y - 1 - CLOSE_H;   // 164
 
-        // Outside panel → close
         if (tx < PAX || tx >= PAX + PAW || ty < PAY || ty >= PAY + PAH) {
             _menuOpen = false; return;
         }
 
         // Tab bar
         if (ty >= PAY + 1 && ty < PAY + 1 + TAB_H) {
-            if (tx < PX + PW / 2) _menuTab = 0; else _menuTab = 1;
+            _menuTab = (tx < CX + (CR - CX) / 2) ? 0 : 1;
             return;
         }
 
-        // Close button
+        // Power off
+        if (ty >= PWR_Y && ty < PWR_Y + CLOSE_H && tx >= CX && tx < CR) {
+            Serial.println("[POWER] Powering off");
+            _stats.save();
+            M5.Display.fillScreen(0);
+            M5.Power.powerOff();
+            while (true) { delay(1000); }
+        }
+
+        // Close
         if (ty >= CLOSE_Y && ty < CLOSE_Y + CLOSE_H) {
             _menuOpen = false; return;
         }
 
-        // Setting tab interactive rows
+        // Setting tab rows
         if (_menuTab == 1) {
-            const int thY = CONT_Y + 6;
-            if (ty >= thY && ty < thY + RH) {
-                if (tx >= PX + 48 && tx < PX + 48 + AW)
+            const int thY = CONT_Y + 8;
+            if (ty >= thY && ty < thY + ROW_H) {
+                if (tx >= BTN_L && tx < BTN_L + AW)
                     Theme::apply(Theme::idx() - 1);
-                else if (tx >= PX + PW - AW && tx < PX + PW)
+                else if (tx >= BTN_R && tx < BTN_R + AW)
                     Theme::apply(Theme::idx() + 1);
                 return;
             }
-            const int brY = CONT_Y + 32;
-            if (ty >= brY && ty < brY + RH) {
-                if (tx >= PX + 48 && tx < PX + 48 + AW)
+            const int brY = thY + ROW_H + 4;
+            if (ty >= brY && ty < brY + ROW_H) {
+                if (tx >= BTN_L && tx < BTN_L + AW)
                     Theme::applyBrightness(Theme::brightness() >= 32 ? Theme::brightness() - 32 : 0);
-                else if (tx >= PX + PW - AW && tx < PX + PW)
+                else if (tx >= BTN_R && tx < BTN_R + AW)
                     Theme::applyBrightness(Theme::brightness() <= 223 ? Theme::brightness() + 32 : 255);
                 return;
-            }
-            const int pwrY = CONT_Y + 62;
-            if (ty >= pwrY && ty < pwrY + 24 && tx >= PX + 8 && tx < PX + PW - 8) {
-                Serial.println("[POWER] Powering off");
-                _stats.save();
-                M5.Display.fillScreen(0);
-                M5.Power.powerOff();
-                while (true) { delay(1000); }
             }
         }
         return;
@@ -508,13 +515,23 @@ void App::_drawInput(M5Canvas& c) const {
 // ── Menu overlay ──────────────────────────────────────────────
 
 void App::_drawMenu(M5Canvas& c) const {
+    // keep in sync with _handleTouch
     constexpr int PAX = 40, PAY = 30, PAW = 240, PAH = 180;
-    constexpr int PX  = PAX + 1, PW = PAW - 2;     // inner: x=41, w=238
+    constexpr int PAD    = 8;
+    constexpr int CX     = PAX + PAD;            // 48  content left
+    constexpr int CR     = PAX + PAW - PAD;      // 272 content right
+    constexpr int CW     = CR - CX;              // 224 content width
     constexpr int TAB_H  = 22;
-    constexpr int CONT_Y = PAY + 1 + TAB_H;         // 53
-    constexpr int CLOSE_H = 24;
-    constexpr int CLOSE_Y = PAY + PAH - CLOSE_H - 1; // 185
-    constexpr int AW = 20, RH = 22;
+    constexpr int CONT_Y = PAY + 1 + TAB_H;      // 53
+    constexpr int ROW_H  = 22;
+    constexpr int AW     = 22;
+    constexpr int LBL_W  = 44;
+    constexpr int BTN_L  = CX + LBL_W;           // 92  left arrow x
+    constexpr int BTN_R  = CR - AW;              // 250 right arrow x
+    constexpr int MID_X  = (BTN_L + AW + BTN_R) / 2; // 182 theme name center
+    constexpr int CLOSE_H = 22;
+    constexpr int CLOSE_Y = PAY + PAH - 1 - CLOSE_H; // 187
+    constexpr int PWR_Y   = CLOSE_Y - 1 - CLOSE_H;   // 164
 
     c.setFont(&fonts::Font0);
     c.setTextSize(1);
@@ -524,92 +541,133 @@ void App::_drawMenu(M5Canvas& c) const {
     c.drawRect(PAX, PAY, PAW, PAH, Theme::FG);
 
     // ── Tabs ──────────────────────────────────────────────────
-    const int tab0x = PX, tab1x = PX + PW / 2, tabW = PW / 2;
+    const int tabW = CW / 2;
     if (_menuTab == 0) {
-        c.fillRect(tab0x, PAY + 1, tabW,     TAB_H, Theme::FG);
-        c.fillRect(tab1x, PAY + 1, PW - tabW, TAB_H, Theme::BG);
-        c.drawRect(tab1x, PAY + 1, PW - tabW, TAB_H, Theme::DIM);
+        c.fillRect(CX,        PAY + 1, tabW, TAB_H, Theme::FG);
+        c.fillRect(CX + tabW, PAY + 1, tabW, TAB_H, Theme::BG);
+        c.drawRect(CX + tabW, PAY + 1, tabW, TAB_H, Theme::DIM);
     } else {
-        c.fillRect(tab0x, PAY + 1, tabW,     TAB_H, Theme::BG);
-        c.drawRect(tab0x, PAY + 1, tabW,     TAB_H, Theme::DIM);
-        c.fillRect(tab1x, PAY + 1, PW - tabW, TAB_H, Theme::FG);
+        c.fillRect(CX,        PAY + 1, tabW, TAB_H, Theme::BG);
+        c.drawRect(CX,        PAY + 1, tabW, TAB_H, Theme::DIM);
+        c.fillRect(CX + tabW, PAY + 1, tabW, TAB_H, Theme::FG);
     }
     c.setTextDatum(lgfx::middle_center);
     c.setTextColor(_menuTab == 0 ? Theme::BG : Theme::DIM);
-    c.drawString("profile", tab0x + tabW / 2, PAY + 1 + TAB_H / 2);
+    c.drawString("profile", CX + tabW / 2,        PAY + 1 + TAB_H / 2);
     c.setTextColor(_menuTab == 1 ? Theme::BG : Theme::DIM);
-    c.drawString("setting", tab1x + (PW - tabW) / 2, PAY + 1 + TAB_H / 2);
-    c.drawFastHLine(PX, CONT_Y, PW, Theme::FG);
+    c.drawString("setting", CX + tabW + tabW / 2, PAY + 1 + TAB_H / 2);
+    c.drawFastHLine(CX, CONT_Y, CW, Theme::FG);
 
-    // ── Close button (always visible at bottom) ───────────────
-    c.drawFastHLine(PX, CLOSE_Y - 1, PW, Theme::DIM);
-    c.setTextColor(Theme::DIM);
+    // ── Bottom: power off + close ─────────────────────────────
+    c.drawFastHLine(CX, PWR_Y - 1,   CW, Theme::DIM);
+    c.drawRect(CX, PWR_Y,   CW, CLOSE_H, Theme::FG);
+    c.setTextColor(Theme::FG);
     c.setTextDatum(lgfx::middle_center);
+    c.drawString("power off", PAX + PAW / 2, PWR_Y + CLOSE_H / 2);
+
+    c.drawFastHLine(CX, CLOSE_Y - 1, CW, Theme::DIM);
+    c.drawRect(CX, CLOSE_Y, CW, CLOSE_H, Theme::DIM);
+    c.setTextColor(Theme::DIM);
     c.drawString("close", PAX + PAW / 2, CLOSE_Y + CLOSE_H / 2);
 
     // ── Content ───────────────────────────────────────────────
     if (_menuTab == 0) {
-        // Profile tab
+        // ── Profile ───────────────────────────────────────────
+        constexpr int BLW = 36;
+        constexpr int BX  = CX + BLW;    // 84  bar left
+        constexpr int BW  = CR - BX;     // 188 bar width
+        constexpr int BH  = 12;          // bar height
+        constexpr int BG  = 5;           // gap between rows
+
+        auto drawBar = [&](const char* lbl, int y, int pct, const char* val) {
+            if (pct < 0)   pct = 0;
+            if (pct > 100) pct = 100;
+            c.setTextColor(Theme::FG);
+            c.setTextDatum(lgfx::middle_left);
+            c.drawString(lbl, CX, y + BH / 2);
+            c.fillRect(BX, y, BW, BH, Theme::PALE);
+            c.drawRect(BX, y, BW, BH, Theme::DIM);
+            int fill = pct * (BW - 2) / 100;
+            if (fill > 0) c.fillRect(BX + 1, y + 1, fill, BH - 2, Theme::FG);
+            c.setTextColor(Theme::BG);
+            c.setTextDatum(lgfx::middle_center);
+            c.drawString(val, BX + BW / 2, y + BH / 2);
+        };
+
+        int bat = M5.Power.getBatteryLevel();
+        if (bat < 0) bat = 0;
+        if (bat > 100) bat = 100;
+
+        uint32_t fH = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)
+                    + (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+        uint32_t tH = (uint32_t)heap_caps_get_total_size(MALLOC_CAP_INTERNAL)
+                    + (uint32_t)heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
+        int ramPct = tH ? (int)((uint64_t)(tH - fH) * 100u / tH) : 0;
+
         uint32_t xp  = _stats.xp();
         uint32_t lv  = xp / 100;
         uint32_t pct = xp % 100;
+        uint32_t cap = _stats.captures();
+
+        uint64_t sdU = SD.usedBytes(), sdT = SD.totalBytes();
+        int sdPct = sdT ? (int)(sdU * 100 / sdT) : 0;
+
         char buf[24];
+        int y = CONT_Y + 6;
 
-        c.setTextColor(Theme::FG);
-        c.setTextDatum(lgfx::middle_center);
-        snprintf(buf, sizeof(buf), "LV %lu", (unsigned long)lv);
-        c.drawString(buf, PAX + PAW / 2, CONT_Y + 16);
+        snprintf(buf, sizeof(buf), M5.Power.isCharging() ? "%d%% CHG" : "%d%%", bat);
+        drawBar("HP",    y, bat,      buf); y += BH + BG;
 
-        // XP bar
-        const int bx = PX + 16, bw = PW - 32, by = CONT_Y + 28, bh = 12;
-        c.fillRect(bx, by, bw, bh, Theme::PALE);
-        c.drawRect(bx, by, bw, bh, Theme::DIM);
-        int xpFill = (int)(pct * (uint32_t)(bw - 2) / 100);
-        if (xpFill > 0) c.fillRect(bx + 1, by + 1, xpFill, bh - 2, Theme::FG);
-        snprintf(buf, sizeof(buf), "xp %lu%%", (unsigned long)pct);
-        c.setTextColor(Theme::BG);
-        c.drawString(buf, bx + bw / 2, by + bh / 2 + 1);
+        snprintf(buf, sizeof(buf), "LV%lu %lu%%", (unsigned long)lv, (unsigned long)pct);
+        drawBar("XP",    y, (int)pct, buf); y += BH + BG;
 
-        c.setTextColor(Theme::FG);
-        snprintf(buf, sizeof(buf), "cap %lu", (unsigned long)_stats.captures());
-        c.drawString(buf, PAX + PAW / 2, CONT_Y + 50);
+        snprintf(buf, sizeof(buf), "%lu cap", (unsigned long)cap);
+        drawBar("BRAIN", y, (int)(cap % 100), buf); y += BH + BG;
+
+        snprintf(buf, sizeof(buf), "%d%%", ramPct);
+        drawBar("RAM",   y, ramPct,   buf); y += BH + BG;
+
+        if (sdT > 0) {
+            uint32_t uMB = (uint32_t)(sdU / (1024 * 1024));
+            uint32_t tMB = (uint32_t)(sdT / (1024 * 1024));
+            if (tMB >= 1024) snprintf(buf, sizeof(buf), "%luMB/%luGB", uMB, tMB / 1024);
+            else             snprintf(buf, sizeof(buf), "%luMB/%luMB", uMB, tMB);
+        } else {
+            strcpy(buf, "no card");
+        }
+        drawBar("SD", y, sdPct, buf);
 
     } else {
-        // Setting tab
+        // ── Setting ───────────────────────────────────────────
+        const int thY = CONT_Y + 8;
+        const int brY = thY + ROW_H + 4;
+
         c.setTextColor(Theme::FG);
 
         // THEME row
-        const int thY = CONT_Y + 6;
         c.setTextDatum(lgfx::middle_left);
-        c.drawString("theme", PX + 4, thY + RH / 2);
-        c.drawRect(PX + 48, thY, AW, RH, Theme::FG);
+        c.drawString("theme",  CX, thY + ROW_H / 2);
+        c.drawRect(BTN_L, thY, AW, ROW_H, Theme::FG);
         c.setTextDatum(lgfx::middle_center);
-        c.drawString("<", PX + 48 + AW / 2, thY + RH / 2);
-        c.drawString(Theme::ENTRIES[Theme::idx()].name, PAX + PAW / 2, thY + RH / 2);
-        c.drawRect(PX + PW - AW, thY, AW, RH, Theme::FG);
-        c.drawString(">", PX + PW - AW + AW / 2, thY + RH / 2);
+        c.drawString("<", BTN_L + AW / 2, thY + ROW_H / 2);
+        c.drawString(Theme::ENTRIES[Theme::idx()].name, MID_X, thY + ROW_H / 2);
+        c.drawRect(BTN_R, thY, AW, ROW_H, Theme::FG);
+        c.drawString(">", BTN_R + AW / 2, thY + ROW_H / 2);
 
-        // BRIGHT row
-        const int brY = CONT_Y + 32;
+        // BRIGHT row — bar same height as arrow buttons
         c.setTextDatum(lgfx::middle_left);
-        c.drawString("bright", PX + 4, brY + RH / 2);
-        c.drawRect(PX + 48, brY, AW, RH, Theme::FG);
+        c.drawString("bright", CX, brY + ROW_H / 2);
+        c.drawRect(BTN_L, brY, AW, ROW_H, Theme::FG);
         c.setTextDatum(lgfx::middle_center);
-        c.drawString("-", PX + 48 + AW / 2, brY + RH / 2);
-        const int barX = PX + 48 + AW + 2, barW = PW - 48 - 2 * AW - 4;
-        c.fillRect(barX, brY + 3, barW, RH - 6, Theme::DIM);
-        c.drawRect(barX, brY + 3, barW, RH - 6, Theme::FG);
+        c.drawString("-", BTN_L + AW / 2, brY + ROW_H / 2);
+        const int barX = BTN_L + AW + 2;
+        const int barW = BTN_R - barX - 2;
+        c.fillRect(barX, brY, barW, ROW_H, Theme::DIM);
+        c.drawRect(barX, brY, barW, ROW_H, Theme::FG);
         int bfill = (int)((uint32_t)Theme::brightness() * (uint32_t)(barW - 2) / 255);
-        if (bfill > 0) c.fillRect(barX + 1, brY + 4, bfill, RH - 8, Theme::FG);
-        c.drawRect(PX + PW - AW, brY, AW, RH, Theme::FG);
-        c.drawString("+", PX + PW - AW + AW / 2, brY + RH / 2);
-
-        // Separator + POWER OFF
-        c.drawFastHLine(PX + 4, CONT_Y + 58, PW - 8, Theme::DIM);
-        const int pwrY = CONT_Y + 62;
-        c.drawRect(PX + 8, pwrY, PW - 16, 24, Theme::FG);
-        c.setTextDatum(lgfx::middle_center);
-        c.drawString("power off", PAX + PAW / 2, pwrY + 12);
+        if (bfill > 0) c.fillRect(barX + 1, brY + 1, bfill, ROW_H - 2, Theme::FG);
+        c.drawRect(BTN_R, brY, AW, ROW_H, Theme::FG);
+        c.drawString("+", BTN_R + AW / 2, brY + ROW_H / 2);
     }
 }
 
