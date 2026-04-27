@@ -1,4 +1,4 @@
-#include "pet/App.h"
+#include "term/App.h"
 
 static App app;
 

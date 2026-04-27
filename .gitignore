@@ -1,4 +1,9 @@
 .pio/
 .vscode/
+.idea/
 *.pyc
 __pycache__/
+# Added by code-review-graph
+.code-review-graph/
+.claude/
+.mcp.json
