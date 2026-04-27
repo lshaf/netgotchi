@@ -325,14 +325,19 @@ void WiFiHunter::_processBeacon(const RawFrame& f) {
         uint16_t stored = (f.len <= MAX_FRAME) ? f.len : MAX_FRAME;
         memcpy(_beaconData[idx], f.data, stored);
         _beaconLen[idx] = stored;
+
+        if (_pcapIsComplete(*ap)) {
+            ap->validated = true;
+            Serial.printf("[AP] Skip \"%s\" — pcap already complete\n", ssid);
+            return;
+        }
+
         _apFoundCount++;
         strncpy(_lastFoundSsid, ssid, 32);
         _lastFoundSsid[32] = '\0';
         Serial.printf("[AP] New %02X:%02X:%02X:%02X:%02X:%02X ch%d \"%s\"\n",
                       bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
                       f.channel, ssid);
-
-        // skip-capture disabled for testing
     }
 }
 
@@ -385,7 +390,10 @@ void WiFiHunter::_processEapol(const RawFrame& f) {
         ap = _registerAp(bssid);
         if (!ap) return;
         ap->channel = f.channel;
-        // skip-capture disabled for testing
+        if (_pcapIsComplete(*ap)) {
+            ap->validated = true;
+            return;
+        }
     }
     if (ap->validated) return;
 
