@@ -8,7 +8,7 @@ public:
         const char* name;
     };
 
-    static constexpr int COUNT = 4;
+    static constexpr int COUNT = 8;
     static const Entry   ENTRIES[COUNT];
 
     static void apply(int idx);

@@ -7,6 +7,10 @@
 #include <SD.h>
 #include <esp_heap_caps.h>
 #include <stdarg.h>
+#include "command/ProfileCommand.h"
+#include "command/ThemeCommand.h"
+#include "command/BrightnessCommand.h"
+#include "command/PowerOffCommand.h"
 
 #if defined(ARDUINO_M5STACK_CORES3)
     static constexpr int SD_CS = 4;
@@ -15,6 +19,15 @@
 #else
     static constexpr int SD_CS = 4;
 #endif
+
+static ProfileCommand    s_profile;
+static ThemeCommand      s_theme;
+static BrightnessCommand s_brightness;
+static PowerOffCommand   s_poweroff;
+static MenuCommand*      s_rootItems[] = {
+    &s_profile, &s_theme, &s_brightness, &s_poweroff
+};
+static constexpr int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
 namespace {
     // ── Layout ───────────────────────────────────────────────
@@ -55,7 +68,28 @@ namespace {
     constexpr uint32_t TYPE_STEP_MS = 35;
     constexpr uint32_t TYPE_HOLD_MS = 400;
     constexpr uint32_t CURSOR_MS    = 480;
+
+    // ── Menu layout ───────────────────────────────────────────
+    constexpr int MENU_ITEM_H = 18;
+    constexpr int BRIGHT_BH   = 14;
 }
+
+// ── IMenuHost ─────────────────────────────────────────────────
+
+void App::cmdPush(const char* text)   { _qPushCmd("%s", text); }
+void App::outPush(const char* text)   { _qPushOut("%s", text); }
+void App::menuClose() { _menuState = MenuState::Closed; _activeSubCmd = nullptr; }
+void App::menuBack()  { _menuState = MenuState::Root;   _activeSubCmd = nullptr; }
+void App::openSubMenu(MenuCommand* cmd) { _activeSubCmd = cmd; _menuState = MenuState::Sub; }
+void App::setPendingTheme(int8_t idx)     { _pendingTheme  = idx; }
+void App::setPendingBrightness(uint8_t v) { _pendingBright = (int)v; }
+void App::setPendingPowerOff()            { _pendingPowerOff = true; }
+uint32_t App::statsXp()         const { return _stats.xp(); }
+uint32_t App::statsCaptures()   const { return _stats.captures(); }
+uint32_t App::statsLevel()      const { return _stats.level(); }
+uint32_t App::statsXpProgress() const { return _stats.xpProgress(); }
+int      App::statsBattery()    const { return _stats.battery(); }
+bool     App::statsCharging()   const { return _stats.isCharging(); }
 
 // ── Init ──────────────────────────────────────────────────────
 
@@ -200,7 +234,22 @@ void App::_updateTyping(uint32_t ms) {
         _typeLine[0] = '\0';
         _typeLen = _typeIdx = 0;
         _typeDone = false;
-        // next iteration will pick up the next entry (OUT drain or new CMD)
+        // Apply any pending configuration changes now that cmd is in the log
+        if (_pendingTheme >= 0) {
+            Theme::apply(_pendingTheme);
+            Theme::save();
+            _pendingTheme = -1;
+        }
+        if (_pendingBright >= 0) {
+            Theme::applyBrightness((uint8_t)_pendingBright);
+            Theme::save();
+            _pendingBright = -1;
+        }
+        if (_pendingPowerOff) {
+            _pendingPowerOff = false;
+            _menuState = MenuState::PowerWait;
+            _powerOffMs = ms;
+        }
     }
 }
 
@@ -217,7 +266,7 @@ void App::_updateHunting(uint32_t ms) {
                       (unsigned long)_stats.xp());
     }
 
-    if (_menuOpen) return;
+    if (_menuState != MenuState::Closed) return;
 
     // ── Exhaust sequence state machine ───────────────────────────
     if (_exhaustPhase == 1) {
@@ -306,74 +355,65 @@ void App::_updateHunting(uint32_t ms) {
 
 void App::_handleTouch(uint32_t ms) {
     auto t = M5.Touch.getDetail();
-    if (!t.wasPressed()) return;
-    int tx = t.x, ty = t.y;
+    if (_menuState == MenuState::PowerWait) return;
 
-    if (_menuOpen) {
-        constexpr int PAX = 40, PAY = 30, PAW = 240, PAH = 180;
-        constexpr int PAD    = 8;
-        constexpr int CX     = PAX + PAD;            // 48
-        constexpr int CR     = PAX + PAW - PAD;      // 272
-        constexpr int TAB_H  = 22;
-        constexpr int CONT_Y = PAY + 1 + TAB_H;      // 53
-        constexpr int ROW_H  = 22;
-        constexpr int AW     = 22;
-        constexpr int LBL_W  = 44;
-        constexpr int BTN_L  = CX + LBL_W;           // 92
-        constexpr int BTN_R  = CR - AW;              // 250
-        constexpr int CLOSE_H = 22;
-        constexpr int CLOSE_Y = PAY + PAH - 1 - CLOSE_H; // 187
-        constexpr int PWR_Y   = CLOSE_Y - 1 - CLOSE_H;   // 164
+    bool pressed  = t.isPressed();
+    bool released = t.wasReleased();
+    int  tx = t.x, ty = t.y;
 
-        if (tx < PAX || tx >= PAX + PAW || ty < PAY || ty >= PAY + PAH) {
-            _menuOpen = false; return;
-        }
-
-        // Tab bar
-        if (ty >= PAY + 1 && ty < PAY + 1 + TAB_H) {
-            _menuTab = (tx < CX + (CR - CX) / 2) ? 0 : 1;
-            return;
-        }
-
-        // Power off
-        if (ty >= PWR_Y && ty < PWR_Y + CLOSE_H && tx >= CX && tx < CR) {
-            Serial.println("[POWER] Powering off");
-            _stats.save();
-            M5.Display.fillScreen(0);
-            M5.Power.powerOff();
-            while (true) { delay(1000); }
-        }
-
-        // Close
-        if (ty >= CLOSE_Y && ty < CLOSE_Y + CLOSE_H) {
-            _menuOpen = false; return;
-        }
-
-        // Setting tab rows
-        if (_menuTab == 1) {
-            const int thY = CONT_Y + 8;
-            if (ty >= thY && ty < thY + ROW_H) {
-                if (tx >= BTN_L && tx < BTN_L + AW)
-                    Theme::apply(Theme::idx() - 1);
-                else if (tx >= BTN_R && tx < BTN_R + AW)
-                    Theme::apply(Theme::idx() + 1);
-                return;
-            }
-            const int brY = thY + ROW_H + 4;
-            if (ty >= brY && ty < brY + ROW_H) {
-                if (tx >= BTN_L && tx < BTN_L + AW)
-                    Theme::applyBrightness(Theme::brightness() >= 32 ? Theme::brightness() - 32 : 0);
-                else if (tx >= BTN_R && tx < BTN_R + AW)
-                    Theme::applyBrightness(Theme::brightness() <= 223 ? Theme::brightness() + 32 : 255);
-                return;
-            }
+    if (_menuState == MenuState::Closed) {
+        if (t.wasPressed() && tx >= Virus::X0 && ty >= 0 && ty < HEADER_DIVIDER_Y) {
+            _menuState      = MenuState::Root;
+            _menuHighlight  = -1;
+            _menuJustOpened = true;
         }
         return;
     }
 
-    // Tap anywhere in the virus column (full header height) → open menu
-    if (tx >= Virus::X0 && tx < SCR_W && ty >= 0 && ty < HEADER_DIVIDER_Y) {
-        _menuOpen = true;
+    if (_menuJustOpened) {
+        if (released) _menuJustOpened = false;
+        return;
+    }
+
+    int nItems = 0, itemH = MENU_ITEM_H, menuTop = 0;
+    if (_menuState == MenuState::Root) {
+        nItems = ROOT_N;
+    } else if (_menuState == MenuState::Sub && _activeSubCmd) {
+        nItems = _activeSubCmd->subCount();
+        itemH  = _activeSubCmd->subItemH();
+    }
+    menuTop = INPUT_DIVIDER_Y - nItems * itemH;
+
+    bool inMenu = (tx >= MARGIN && tx < SCR_W - MARGIN &&
+                   ty >= menuTop && ty < INPUT_DIVIDER_Y);
+    int hitItem = -1;
+    if (inMenu) {
+        hitItem = (ty - menuTop) / itemH;
+        if (hitItem >= nItems) hitItem = -1;
+    }
+
+    if (pressed) {
+        _menuHighlight = (int8_t)hitItem;
+        return;
+    }
+
+    if (!released) return;
+
+    int sel        = (int)_menuHighlight;
+    _menuHighlight = -1;
+
+    if (!inMenu || sel < 0) {
+        menuClose();
+        return;
+    }
+
+    if (_menuState == MenuState::Root) {
+        s_rootItems[sel]->execute(*this);
+        return;
+    }
+
+    if (_menuState == MenuState::Sub && _activeSubCmd) {
+        _activeSubCmd->onSubSelect(*this, sel);
         return;
     }
 }
@@ -421,9 +461,8 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
     c.fillRect(0, 0, SCR_W, HEAD_H, Theme::BG);
 
     // Battery
-    int bat = M5.Power.getBatteryLevel();
-    if (bat < 0)   bat = 0;
-    if (bat > 100) bat = 100;
+    int  bat      = _stats.battery();
+    bool charging = _stats.isCharging();
 
     // RAM (used %)
     uint32_t freeH  = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)
@@ -441,17 +480,15 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
     const int ramX   = batX + eachW + BAR_GAP;
 
     char buf[16];
-    bool charging = M5.Power.isCharging();
-    snprintf(buf, sizeof(buf), charging ? "%d%%++" : "%d%%", bat);
-    drawValueBar(c, batX, BAR1_Y, eachW, BAR_H, "BAT", buf, bat);
+    snprintf(buf, sizeof(buf), "%d%%", bat);
+    drawValueBar(c, batX, BAR1_Y, eachW, BAR_H, charging ? "BAT++" : "BAT", buf, bat);
 
     snprintf(buf, sizeof(buf), "%d%%", ram);
     drawValueBar(c, ramX, BAR1_Y, eachW, BAR_H, "RAM", buf, ram);
 
     // ── Row 2: [EXP ====================== LVx] ───────────────
-    uint32_t xp = _stats.xp();
-    snprintf(buf, sizeof(buf), "LV%lu", (unsigned long)(xp / 100));
-    drawValueBar(c, MARGIN, BAR2_Y, stripW, BAR_H, "EXP", buf, (int)(xp % 100));
+    snprintf(buf, sizeof(buf), "LV%lu", (unsigned long)_stats.level());
+    drawValueBar(c, MARGIN, BAR2_Y, stripW, BAR_H, "EXP", buf, (int)_stats.xpProgress());
 
     // ── Header bottom divider ────────────────────────────────
     c.drawFastHLine(0, HEADER_DIVIDER_Y, SCR_W, Theme::DIM);
@@ -512,162 +549,66 @@ void App::_drawInput(M5Canvas& c) const {
     }
 }
 
-// ── Menu overlay ──────────────────────────────────────────────
+// ── Menu overlay (floats above input, log visible above) ─────────
 
-void App::_drawMenu(M5Canvas& c) const {
-    // keep in sync with _handleTouch
-    constexpr int PAX = 40, PAY = 30, PAW = 240, PAH = 180;
-    constexpr int PAD    = 8;
-    constexpr int CX     = PAX + PAD;            // 48  content left
-    constexpr int CR     = PAX + PAW - PAD;      // 272 content right
-    constexpr int CW     = CR - CX;              // 224 content width
-    constexpr int TAB_H  = 22;
-    constexpr int CONT_Y = PAY + 1 + TAB_H;      // 53
-    constexpr int ROW_H  = 22;
-    constexpr int AW     = 22;
-    constexpr int LBL_W  = 44;
-    constexpr int BTN_L  = CX + LBL_W;           // 92  left arrow x
-    constexpr int BTN_R  = CR - AW;              // 250 right arrow x
-    constexpr int MID_X  = (BTN_L + AW + BTN_R) / 2; // 182 theme name center
-    constexpr int CLOSE_H = 22;
-    constexpr int CLOSE_Y = PAY + PAH - 1 - CLOSE_H; // 187
-    constexpr int PWR_Y   = CLOSE_Y - 1 - CLOSE_H;   // 164
-
+void App::_drawMenuContent(M5Canvas& c) const {
     c.setFont(&fonts::Font0);
     c.setTextSize(1);
 
-    // ── Panel ─────────────────────────────────────────────────
-    c.fillRect(PAX, PAY, PAW, PAH, Theme::BG);
-    c.drawRect(PAX, PAY, PAW, PAH, Theme::FG);
-
-    // ── Tabs ──────────────────────────────────────────────────
-    const int tabW = CW / 2;
-    if (_menuTab == 0) {
-        c.fillRect(CX,        PAY + 1, tabW, TAB_H, Theme::FG);
-        c.fillRect(CX + tabW, PAY + 1, tabW, TAB_H, Theme::BG);
-        c.drawRect(CX + tabW, PAY + 1, tabW, TAB_H, Theme::DIM);
-    } else {
-        c.fillRect(CX,        PAY + 1, tabW, TAB_H, Theme::BG);
-        c.drawRect(CX,        PAY + 1, tabW, TAB_H, Theme::DIM);
-        c.fillRect(CX + tabW, PAY + 1, tabW, TAB_H, Theme::FG);
+    int nItems = 0, itemH = MENU_ITEM_H, menuTop = 0;
+    if (_menuState == MenuState::Root) {
+        nItems = ROOT_N;
+    } else if (_menuState == MenuState::Sub && _activeSubCmd) {
+        nItems = _activeSubCmd->subCount();
+        itemH  = _activeSubCmd->subItemH();
     }
-    c.setTextDatum(lgfx::middle_center);
-    c.setTextColor(_menuTab == 0 ? Theme::BG : Theme::DIM);
-    c.drawString("profile", CX + tabW / 2,        PAY + 1 + TAB_H / 2);
-    c.setTextColor(_menuTab == 1 ? Theme::BG : Theme::DIM);
-    c.drawString("setting", CX + tabW + tabW / 2, PAY + 1 + TAB_H / 2);
-    c.drawFastHLine(CX, CONT_Y, CW, Theme::FG);
+    menuTop = INPUT_DIVIDER_Y - nItems * itemH;
 
-    // ── Bottom: power off + close ─────────────────────────────
-    c.drawFastHLine(CX, PWR_Y - 1,   CW, Theme::DIM);
-    c.drawRect(CX, PWR_Y,   CW, CLOSE_H, Theme::FG);
-    c.setTextColor(Theme::FG);
-    c.setTextDatum(lgfx::middle_center);
-    c.drawString("power off", PAX + PAW / 2, PWR_Y + CLOSE_H / 2);
+    c.fillRect(0, menuTop, SCR_W, INPUT_DIVIDER_Y - menuTop, Theme::BG);
+    c.drawFastHLine(0, menuTop, SCR_W, Theme::DIM);
 
-    c.drawFastHLine(CX, CLOSE_Y - 1, CW, Theme::DIM);
-    c.drawRect(CX, CLOSE_Y, CW, CLOSE_H, Theme::DIM);
-    c.setTextColor(Theme::DIM);
-    c.drawString("close", PAX + PAW / 2, CLOSE_Y + CLOSE_H / 2);
-
-    // ── Content ───────────────────────────────────────────────
-    if (_menuTab == 0) {
-        // ── Profile ───────────────────────────────────────────
-        constexpr int BLW = 36;
-        constexpr int BX  = CX + BLW;    // 84  bar left
-        constexpr int BW  = CR - BX;     // 188 bar width
-        constexpr int BH  = 12;          // bar height
-        constexpr int BG  = 5;           // gap between rows
-
-        auto drawBar = [&](const char* lbl, int y, int pct, const char* val) {
-            if (pct < 0)   pct = 0;
-            if (pct > 100) pct = 100;
-            c.setTextColor(Theme::FG);
+    if (_menuState == MenuState::Root) {
+        for (int i = 0; i < ROOT_N; i++) {
+            int y   = menuTop + i * MENU_ITEM_H;
+            bool hi = ((int)_menuHighlight == i);
+            if (hi) c.fillRect(0, y, SCR_W, MENU_ITEM_H, Theme::PALE);
+            c.setTextColor(Theme::FG, hi ? Theme::PALE : Theme::BG);
             c.setTextDatum(lgfx::middle_left);
-            c.drawString(lbl, CX, y + BH / 2);
-            c.fillRect(BX, y, BW, BH, Theme::PALE);
-            c.drawRect(BX, y, BW, BH, Theme::DIM);
-            int fill = pct * (BW - 2) / 100;
-            if (fill > 0) c.fillRect(BX + 1, y + 1, fill, BH - 2, Theme::FG);
-            c.setTextColor(Theme::BG);
-            c.setTextDatum(lgfx::middle_center);
-            c.drawString(val, BX + BW / 2, y + BH / 2);
-        };
-
-        int bat = M5.Power.getBatteryLevel();
-        if (bat < 0) bat = 0;
-        if (bat > 100) bat = 100;
-
-        uint32_t fH = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)
-                    + (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
-        uint32_t tH = (uint32_t)heap_caps_get_total_size(MALLOC_CAP_INTERNAL)
-                    + (uint32_t)heap_caps_get_total_size(MALLOC_CAP_SPIRAM);
-        int ramPct = tH ? (int)((uint64_t)(tH - fH) * 100u / tH) : 0;
-
-        uint32_t xp  = _stats.xp();
-        uint32_t lv  = xp / 100;
-        uint32_t pct = xp % 100;
-        uint32_t cap = _stats.captures();
-
-        uint64_t sdU = SD.usedBytes(), sdT = SD.totalBytes();
-        int sdPct = sdT ? (int)(sdU * 100 / sdT) : 0;
-
-        char buf[24];
-        int y = CONT_Y + 6;
-
-        snprintf(buf, sizeof(buf), M5.Power.isCharging() ? "%d%% CHG" : "%d%%", bat);
-        drawBar("HP",    y, bat,      buf); y += BH + BG;
-
-        snprintf(buf, sizeof(buf), "LV%lu %lu%%", (unsigned long)lv, (unsigned long)pct);
-        drawBar("XP",    y, (int)pct, buf); y += BH + BG;
-
-        snprintf(buf, sizeof(buf), "%lu cap", (unsigned long)cap);
-        drawBar("BRAIN", y, (int)(cap % 100), buf); y += BH + BG;
-
-        snprintf(buf, sizeof(buf), "%d%%", ramPct);
-        drawBar("RAM",   y, ramPct,   buf); y += BH + BG;
-
-        if (sdT > 0) {
-            uint32_t uMB = (uint32_t)(sdU / (1024 * 1024));
-            uint32_t tMB = (uint32_t)(sdT / (1024 * 1024));
-            if (tMB >= 1024) snprintf(buf, sizeof(buf), "%luMB/%luGB", uMB, tMB / 1024);
-            else             snprintf(buf, sizeof(buf), "%luMB/%luMB", uMB, tMB);
-        } else {
-            strcpy(buf, "no card");
+            c.drawString(s_rootItems[i]->label(), MARGIN + 6, y + MENU_ITEM_H / 2);
         }
-        drawBar("SD", y, sdPct, buf);
+    }
 
-    } else {
-        // ── Setting ───────────────────────────────────────────
-        const int thY = CONT_Y + 8;
-        const int brY = thY + ROW_H + 4;
+    if (_menuState == MenuState::Sub && _activeSubCmd) {
+        for (int i = 0; i < nItems; i++) {
+            int y    = menuTop + i * itemH;
+            bool hi  = ((int)_menuHighlight == i);
+            bool act = _activeSubCmd->subIsActive(i);
+            uint16_t col = act ? Theme::FG : Theme::DIM;
+            if (hi) c.fillRect(0, y, SCR_W, itemH, Theme::PALE);
+            c.setTextColor(col, hi ? Theme::PALE : Theme::BG);
+            c.setTextDatum(lgfx::middle_left);
+            c.drawString(_activeSubCmd->subLabel(i), MARGIN + 6, y + itemH / 2);
+            if (act) {
+                c.setTextDatum(lgfx::middle_right);
+                c.drawString("*", SCR_W - MARGIN - 6, y + itemH / 2);
+            }
+        }
+    }
 
-        c.setTextColor(Theme::FG);
+    // Input area — show parent command label as typed hint while sub-menu is open
+    c.drawFastHLine(0, INPUT_DIVIDER_Y, SCR_W, Theme::DIM);
+    c.fillRect(0, INPUT_DIVIDER_Y + 1, SCR_W, SCR_H - (INPUT_DIVIDER_Y + 1), Theme::BG);
+    c.setTextColor(Theme::FG, Theme::BG);
+    c.setTextDatum(lgfx::top_left);
+    c.drawString("$ ", MARGIN, INPUT_Y);
 
-        // THEME row
-        c.setTextDatum(lgfx::middle_left);
-        c.drawString("theme",  CX, thY + ROW_H / 2);
-        c.drawRect(BTN_L, thY, AW, ROW_H, Theme::FG);
-        c.setTextDatum(lgfx::middle_center);
-        c.drawString("<", BTN_L + AW / 2, thY + ROW_H / 2);
-        c.drawString(Theme::ENTRIES[Theme::idx()].name, MID_X, thY + ROW_H / 2);
-        c.drawRect(BTN_R, thY, AW, ROW_H, Theme::FG);
-        c.drawString(">", BTN_R + AW / 2, thY + ROW_H / 2);
-
-        // BRIGHT row — bar same height as arrow buttons
-        c.setTextDatum(lgfx::middle_left);
-        c.drawString("bright", CX, brY + ROW_H / 2);
-        c.drawRect(BTN_L, brY, AW, ROW_H, Theme::FG);
-        c.setTextDatum(lgfx::middle_center);
-        c.drawString("-", BTN_L + AW / 2, brY + ROW_H / 2);
-        const int barX = BTN_L + AW + 2;
-        const int barW = BTN_R - barX - 2;
-        c.fillRect(barX, brY, barW, ROW_H, Theme::DIM);
-        c.drawRect(barX, brY, barW, ROW_H, Theme::FG);
-        int bfill = (int)((uint32_t)Theme::brightness() * (uint32_t)(barW - 2) / 255);
-        if (bfill > 0) c.fillRect(barX + 1, brY + 1, bfill, ROW_H - 2, Theme::FG);
-        c.drawRect(BTN_R, brY, AW, ROW_H, Theme::FG);
-        c.drawString("+", BTN_R + AW / 2, brY + ROW_H / 2);
+    const char* inputText = (_menuState == MenuState::Sub && _activeSubCmd)
+                            ? _activeSubCmd->label() : "";
+    const int textX = MARGIN + 2 * CHAR_W;
+    if (inputText[0]) c.drawString(inputText, textX, INPUT_Y);
+    if (_cursorOn) {
+        int cx = textX + (int)strlen(inputText) * CHAR_W;
+        c.fillRect(cx, INPUT_Y, CHAR_W - 1, CHAR_H, Theme::FG);
     }
 }
 
@@ -677,6 +618,13 @@ void App::update() {
     M5.update();
     uint32_t ms = millis();
 
+    if (_menuState == MenuState::PowerWait && ms - _powerOffMs >= 2000) {
+        _stats.save();
+        M5.Display.fillScreen(0);
+        M5.Power.powerOff();
+        while (true) { delay(1000); }
+    }
+
     _handleTouch(ms);
     _updateHunting(ms);
     _updateTyping(ms);
@@ -684,7 +632,10 @@ void App::update() {
     _canvas->fillScreen(Theme::BG);
     _drawHud(*_canvas, ms);
     _drawLog(*_canvas);
-    _drawInput(*_canvas);
-    if (_menuOpen) _drawMenu(*_canvas);
+    if (_menuState == MenuState::Root || _menuState == MenuState::Sub) {
+        _drawMenuContent(*_canvas);
+    } else {
+        _drawInput(*_canvas);
+    }
     _canvas->pushSprite(0, 0);
 }

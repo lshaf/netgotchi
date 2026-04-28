@@ -1,6 +1,7 @@
 #include "Stats.h"
 #include <SD.h>
 #include <Arduino.h>
+#include <M5Unified.h>
 
 static constexpr const char* SAVE_PATH = "/netgotchi/stats";
 
@@ -35,6 +36,13 @@ void Stats::save() const {
     f.write((const uint8_t*)&_captures, 4);
     f.close();
 }
+
+int  Stats::battery()    const {
+    int b = M5.Power.getBatteryLevel();
+    return (b < 0) ? 0 : (b > 100 ? 100 : b);
+}
+
+bool Stats::isCharging() const { return M5.Power.isCharging(); }
 
 void Stats::onCapture() {
     _captures++;

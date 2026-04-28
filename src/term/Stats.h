@@ -9,8 +9,12 @@ public:
     // Call on each confirmed EAPOL handshake capture.
     void onCapture();
 
-    uint32_t xp()       const { return _xp; }
-    uint32_t captures() const { return _captures; }
+    uint32_t xp()         const { return _xp; }
+    uint32_t captures()   const { return _captures; }
+    uint32_t level()      const { return (_xp / 100) + 1; }
+    uint32_t xpProgress() const { return _xp % 100; }
+    int      battery()    const;
+    bool     isCharging() const;
 
 private:
     static constexpr uint32_t MAGIC           = 0xDEADBEEF;

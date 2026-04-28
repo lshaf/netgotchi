@@ -1,15 +1,32 @@
 #pragma once
 #include "../net/WiFiHunter.h"
 #include "Stats.h"
+#include "command/MenuCommand.h"
 #include <M5GFX.h>
 
-class App {
+class App : public IMenuHost {
 public:
     void init();
     void update();
 
+    // IMenuHost interface
+    void cmdPush(const char* text) override;
+    void outPush(const char* text) override;
+    void menuClose() override;
+    void menuBack()  override;
+    void openSubMenu(MenuCommand* cmd) override;
+    void setPendingTheme(int8_t idx) override;
+    void setPendingBrightness(uint8_t val255) override;
+    void setPendingPowerOff() override;
+    uint32_t statsXp()         const override;
+    uint32_t statsCaptures()   const override;
+    uint32_t statsLevel()      const override;
+    uint32_t statsXpProgress() const override;
+    int      statsBattery()    const override;
+    bool     statsCharging()   const override;
+
 private:
-    static constexpr int LINE_COL  = 53;   // chars + null  (52 visible @ 6px = 312px)
+    static constexpr int LINE_COL  = 53;
     static constexpr int LOG_LINES = 20;
     static constexpr int Q_SIZE    = 16;
 
@@ -22,14 +39,14 @@ private:
 
     // ── Scrollback ring ──────────────────────────────────────────
     char    _logBuf[LOG_LINES][LINE_COL] = {};
-    uint8_t _logHead = 0;     // next write slot
+    uint8_t _logHead = 0;
 
     // ── Type-out queue ───────────────────────────────────────────
     char    _queue[Q_SIZE][LINE_COL] = {};
     uint8_t _queueKind[Q_SIZE]       = {};
     uint8_t _qHead = 0, _qTail = 0, _qCount = 0;
 
-    // ── Currently typing line (commands only) ─────────────────────
+    // ── Currently typing line ────────────────────────────────────
     char     _typeLine[LINE_COL] = {};
     int      _typeLen   = 0;
     int      _typeIdx   = 0;
@@ -42,30 +59,39 @@ private:
     uint32_t _cursorMs = 0;
 
     // ── Hunting state tracking ───────────────────────────────────
-    uint32_t _lastCaptureCount          = 0;
-    uint32_t _lastApFoundCount          = 0;
-    uint32_t _lastDeauthTargetCount     = 0;
-    uint32_t _lastEapolEventCount       = 0;
-    uint32_t _statusLogMs               = 0;
-    uint8_t  _lastChannel               = 0;
-    uint32_t _pauseUntilMs              = 0;
-    uint8_t  _exhaustPhase              = 0;  // 0=normal 1=60s wait 2=5s start wait
+    uint32_t _lastCaptureCount      = 0;
+    uint32_t _lastApFoundCount      = 0;
+    uint32_t _lastDeauthTargetCount = 0;
+    uint32_t _lastEapolEventCount   = 0;
+    uint32_t _statusLogMs           = 0;
+    uint8_t  _lastChannel           = 0;
+    uint32_t _pauseUntilMs          = 0;
+    uint8_t  _exhaustPhase          = 0;
 
-    // ── Menu overlay ─────────────────────────────────────────────
-    bool _menuOpen = false;
-    int  _menuTab  = 0;   // 0=profile  1=setting
+    // ── Menu state ────────────────────────────────────────────────
+    enum class MenuState : uint8_t { Closed, Root, Sub, PowerWait };
+    MenuState    _menuState       = MenuState::Closed;
+    int8_t       _pendingTheme    = -1;
+    int          _pendingBright   = -1;
+    bool         _pendingPowerOff = false;
+    uint32_t     _powerOffMs      = 0;
+
+    MenuCommand* _activeSubCmd    = nullptr;  // command owning the open sub-menu
+
+    int8_t       _menuHighlight   = -1;
+    bool         _menuJustOpened  = false;
 
     void _logPush  (const char* line);
     void _qPushCmd (const char* fmt, ...);
     void _qPushOut (const char* fmt, ...);
     bool _qPop     (uint8_t* outKind);
 
-    void _updateTyping (uint32_t ms);
-    void _updateHunting(uint32_t ms);
-    void _handleTouch  (uint32_t ms);
+    void _updateTyping  (uint32_t ms);
+    void _updateHunting (uint32_t ms);
+    void _handleTouch   (uint32_t ms);
 
-    void _drawHud   (M5Canvas& c, uint32_t ms) const;
-    void _drawLog   (M5Canvas& c) const;
-    void _drawInput (M5Canvas& c) const;
-    void _drawMenu  (M5Canvas& c) const;
+    void _drawHud         (M5Canvas& c, uint32_t ms) const;
+    void _drawLog         (M5Canvas& c) const;
+    void _drawInput       (M5Canvas& c) const;
+    void _drawMenuContent (M5Canvas& c) const;
 };
