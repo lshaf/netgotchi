@@ -102,14 +102,14 @@ void App::startNethunt() {
     _guard.pause();
     _hunter.resume();
     _nethuntRunning = true;
-    _qPushOut("service nethunt start");
+    _qPushCmd("service nethunt start");
     menuClose();
 }
 void App::_stopNethunt() {
     _hunter.pause();
     _nethuntRunning = false;
     _exhaustPhase   = 0;
-    _qPushOut("service nethunt stop");
+    _qPushCmd("service nethunt stop");
     menuClose();
 }
 void App::startNetguard() {
@@ -119,13 +119,13 @@ void App::startNetguard() {
     _lastGuardDeauthCount = 0;
     _lastBeaconFloodCount = 0;
     _lastEvilTwinCount    = 0;
-    _qPushOut("service netguard start");
+    _qPushCmd("service netguard start");
     menuClose();
 }
 void App::_stopNetguard() {
     _guard.pause();
     _netguardRunning = false;
-    _qPushOut("service netguard stop");
+    _qPushCmd("service netguard stop");
     menuClose();
 }
 void App::_stopCrack() {

@@ -4,7 +4,7 @@
 #include <cstdio>
 
 void CrackCommand::execute(IMenuHost& host) {
-    if (!_pcapLoaded) {
+    if (!_pcapLoaded || _state == kDict) {
         _loadPcapList();
         _pcapLoaded = true;
     }
