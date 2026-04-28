@@ -12,7 +12,8 @@
 #include "command/BrightnessCommand.h"
 #include "command/PowerOffCommand.h"
 #include "command/CrackCommand.h"
-#include "command/NetgotchiCommand.h"
+#include "command/NethuntCommand.h"
+#include "command/NetguardCommand.h"
 #include "../core/FastWpaCrack.h"
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -25,14 +26,15 @@
     static constexpr int SD_CS = 4;
 #endif
 
-static NetgotchiCommand  s_netgotchi;
+static NethuntCommand    s_nethunt;
+static NetguardCommand   s_netguard;
 static ProfileCommand    s_profile;
 static CrackCommand      s_crack;
 static ThemeCommand      s_theme;
 static BrightnessCommand s_brightness;
 static PowerOffCommand   s_poweroff;
 static MenuCommand*      s_rootItems[] = {
-    &s_netgotchi, &s_profile, &s_crack, &s_theme, &s_brightness, &s_poweroff
+    &s_nethunt, &s_netguard, &s_profile, &s_crack, &s_theme, &s_brightness, &s_poweroff
 };
 static constexpr int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
@@ -96,16 +98,31 @@ void App::startCrack(const char* pcapPath, const char* dictPath) {
     strncpy(_crackCtx.wordlistPath, dictPath, sizeof(_crackCtx.wordlistPath) - 1);
     _pendingCrack = true;
 }
-void App::startNetgotchi() {
-    _netgotchiRunning = true;
+void App::startNethunt() {
+    _nethuntRunning = true;
+    _hunter.setGuardMode(false);
     _hunter.resume();
-    _qPushOut("service netgotchi start");
+    _qPushOut("service nethunt start");
     menuClose();
 }
-void App::_stopNetgotchi() {
-    _netgotchiRunning = false;
+void App::_stopNethunt() {
+    _nethuntRunning = false;
     _hunter.pause();
-    _qPushOut("service netgotchi stop");
+    _qPushOut("service nethunt stop");
+    menuClose();
+}
+void App::startNetguard() {
+    _netguardRunning = true;
+    _hunter.setGuardMode(true);
+    _hunter.resume();
+    _qPushOut("service netguard start");
+    menuClose();
+}
+void App::_stopNetguard() {
+    _netguardRunning = false;
+    _hunter.setGuardMode(false);
+    _hunter.pause();
+    _qPushOut("service netguard stop");
     menuClose();
 }
 void App::_stopCrack() {
@@ -289,7 +306,7 @@ void App::_updateTyping(uint32_t ms) {
 // ── Hunting integration ───────────────────────────────────────
 
 void App::_updateHunting(uint32_t ms) {
-    if (!_netgotchiRunning) return;
+    if (!_nethuntRunning && !_netguardRunning) return;
     if (_crackState != CrackState::Idle) return;
     if (ms - _statusLogMs >= 10000) {
         _statusLogMs = ms;
@@ -303,19 +320,20 @@ void App::_updateHunting(uint32_t ms) {
 
     if (_menuState != MenuState::Closed) return;
 
-    // ── Exhaust sequence state machine ───────────────────────────
-    if (_exhaustPhase == 1) {
-        if (ms < _pauseUntilMs) return;      // waiting 60 s
-        _qPushCmd("service netgotchi start");
-        _pauseUntilMs = ms + 5000;
-        _exhaustPhase = 2;
-        return;
-    }
-    if (_exhaustPhase == 2) {
-        if (ms < _pauseUntilMs) return;      // waiting 5 s
-        _qPushCmd("setchannel 1");
-        _exhaustPhase = 0;
-        // fall through — hunter resumes below
+    // ── Exhaust sequence state machine (nethunt only) ─────────────
+    if (_nethuntRunning) {
+        if (_exhaustPhase == 1) {
+            if (ms < _pauseUntilMs) return;
+            _qPushCmd("service nethunt start");
+            _pauseUntilMs = ms + 5000;
+            _exhaustPhase = 2;
+            return;
+        }
+        if (_exhaustPhase == 2) {
+            if (ms < _pauseUntilMs) return;
+            _qPushCmd("setchannel 1");
+            _exhaustPhase = 0;
+        }
     }
 
     _hunter.update(ms);
@@ -330,7 +348,7 @@ void App::_updateHunting(uint32_t ms) {
             _lastEapolEventCount   = 0;
             _lastCaptureCount      = 0;
             _lastChannel = ch;
-            _qPushCmd("service netgotchi exhaust 60");
+            _qPushCmd("service nethunt exhaust 60");
             _pauseUntilMs = ms + 60000;
             _exhaustPhase = 1;
             return;                          // setchannel 1 deferred to phase 2 end
@@ -348,17 +366,17 @@ void App::_updateHunting(uint32_t ms) {
         _qPushOut("detected %.32s", (ssid && ssid[0]) ? ssid : "<hidden>");
     }
 
-    // Deauth sent — first attempt per AP target only
-    // LOG_BODY=50: "deauth " (7) + SSID up to 32 = 39 chars ≤ 50
-    uint32_t dtc = _hunter.deauthTargetCount();
-    if (dtc > _lastDeauthTargetCount) {
-        _lastDeauthTargetCount = dtc;
-        const char* dsid = _hunter.lastDeauthSsid();
-        _qPushCmd("deauth %.32s", (dsid && dsid[0]) ? dsid : "??");
+    if (_nethuntRunning) {
+        // Deauth sent — first attempt per AP target only
+        uint32_t dtc = _hunter.deauthTargetCount();
+        if (dtc > _lastDeauthTargetCount) {
+            _lastDeauthTargetCount = dtc;
+            const char* dsid = _hunter.lastDeauthSsid();
+            _qPushCmd("deauth %.32s", (dsid && dsid[0]) ? dsid : "??");
+        }
     }
 
-    // EAPOL frame received — passive receive
-    // LOG_BODY=50: "[+] eapol M1 " (13) + SSID up to 32 = 45 chars ≤ 50
+    // EAPOL frame received (both modes)
     uint32_t eec = _hunter.eapolEventCount();
     if (eec > _lastEapolEventCount) {
         _lastEapolEventCount = eec;
@@ -367,22 +385,31 @@ void App::_updateHunting(uint32_t ms) {
         _qPushOut("traced eapol M%d %.32s", msg, (esid && esid[0]) ? esid : "??");
     }
 
-    // Handshake complete — dump command with real file size as end address
-    // LOG_BODY=50: "dump 0xHHHH..0xHHHH >> " (23) + filename up to 27 = 50 chars
-    uint32_t caps = _hunter.captureCount();
-    if (caps > _lastCaptureCount) {
-        _lastCaptureCount = caps;
-        const char* path  = _hunter.lastCapturePath();
-        const char* fname = strrchr(path, '/');
-        fname = fname ? fname + 1 : path;
-        _stats.onCapture();
-        _stats.save();
-        File pcap = SD.open(path, FILE_READ);
-        uint32_t fsize = pcap ? (uint32_t)pcap.size() : 512;
-        if (pcap) pcap.close();
-        uint16_t r1 = 0x1000 + (uint16_t)(rand() & 0xCFFF);
-        uint16_t r2 = r1 + (uint16_t)(fsize & 0xFFFF);
-        _qPushCmd("dump 0x%04x..0x%04x >> %.27s", r1, r2, fname);
+    // External deauth detected — another attacker on channel (both modes)
+    uint32_t edc = _hunter.externalDeauthCount();
+    if (edc > _lastExternalDeauthCount) {
+        _lastExternalDeauthCount = edc;
+        const char* eid = _hunter.lastExternalDeauthSsid();
+        _qPushOut("alert deauth %.32s", (eid && eid[0]) ? eid : "??");
+    }
+
+    if (_nethuntRunning) {
+        // Handshake complete — dump command with real file size as end address
+        uint32_t caps = _hunter.captureCount();
+        if (caps > _lastCaptureCount) {
+            _lastCaptureCount = caps;
+            const char* path  = _hunter.lastCapturePath();
+            const char* fname = strrchr(path, '/');
+            fname = fname ? fname + 1 : path;
+            _stats.onCapture();
+            _stats.save();
+            File pcap = SD.open(path, FILE_READ);
+            uint32_t fsize = pcap ? (uint32_t)pcap.size() : 512;
+            if (pcap) pcap.close();
+            uint16_t r1 = 0x1000 + (uint16_t)(rand() & 0xCFFF);
+            uint16_t r2 = r1 + (uint16_t)(fsize & 0xFFFF);
+            _qPushCmd("dump 0x%04x..0x%04x >> %.27s", r1, r2, fname);
+        }
     }
 }
 
@@ -785,7 +812,7 @@ void App::_handleTouch(uint32_t ms) {
 
     int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
-        nItems = (_netgotchiRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
+        nItems = (_nethuntRunning || _netguardRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
@@ -857,8 +884,9 @@ void App::_handleTouch(uint32_t ms) {
     }
 
     if (_menuState == MenuState::Root) {
-        if (_netgotchiRunning)                     { _stopNetgotchi(); return; }
-        if (_crackState == CrackState::Running)    { _stopCrack();     return; }
+        if (_nethuntRunning)                        { _stopNethunt();   return; }
+        if (_netguardRunning)                       { _stopNetguard();  return; }
+        if (_crackState == CrackState::Running)     { _stopCrack();     return; }
         s_rootItems[itemIdx]->execute(*this);
         return;
     }
@@ -947,7 +975,8 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
     Virus::State vs;
     if      (_exhaustPhase != 0)                    vs = Virus::State::Sleep;
     else if (_crackState != CrackState::Idle)       vs = Virus::State::Decrypting;
-    else if (_netgotchiRunning)                     vs = Virus::State::Active;
+    else if (_nethuntRunning)                       vs = Virus::State::Active;
+    else if (_netguardRunning)                      vs = Virus::State::Guard;
     else                                            vs = Virus::State::Idle;
     Virus::draw(c, ms, vs);
 }
@@ -1049,7 +1078,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
 
     int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
-        nItems = (_netgotchiRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
+        nItems = (_nethuntRunning || _netguardRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
@@ -1108,7 +1137,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
         if (itemIdx < 0 || itemIdx >= nItems) continue;
 
         if (_menuState == MenuState::Root) {
-            const bool locked = _netgotchiRunning || (_crackState == CrackState::Running);
+            const bool locked = _nethuntRunning || _netguardRunning || (_crackState == CrackState::Running);
             const char* lbl = locked ? "stop" : s_rootItems[itemIdx]->label();
             drawItem(slot, lbl, true);
         } else if (_menuState == MenuState::Sub && _activeSubCmd) {

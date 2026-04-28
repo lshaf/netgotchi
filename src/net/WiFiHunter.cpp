@@ -598,6 +598,7 @@ void WiFiHunter::_hopChannel() {
 // ── Build attack queue — unvalidated APs on current channel ──
 
 void WiFiHunter::_buildAttackQueue() {
+    if (_guardMode) return;
     _attackQueueLen = 0;
     for (int i = 0; i < _apCount; i++) {
         const ApInfo& ap = _aps[i];

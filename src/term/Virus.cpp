@@ -121,6 +121,38 @@ void Virus::draw(M5Canvas& c, uint32_t ms, State state) {
         return;
     }
 
+    // ── Guard ─────────────────────────────────────────────────────
+    if (state == State::Guard) {
+        // Steady short pale spikes — present but not aggressive
+        for (int i = 1; i <= 2; i++) {
+            c.drawPixel(cx,         cy - R - i, Theme::PALE);
+            c.drawPixel(cx,         cy + R + i, Theme::PALE);
+            c.drawPixel(cx - R - i, cy,         Theme::PALE);
+            c.drawPixel(cx + R + i, cy,         Theme::PALE);
+        }
+        c.fillRect(cx - 1, cy - R - 3, 3, 1, Theme::PALE);
+        c.fillRect(cx - 1, cy + R + 2, 3, 1, Theme::PALE);
+        c.fillRect(cx - R - 3, cy - 1, 1, 3, Theme::PALE);
+        c.fillRect(cx + R + 2, cy - 1, 1, 3, Theme::PALE);
+
+        c.fillCircle(cx, cy, R, Theme::BG);
+        c.drawCircle(cx, cy, R, Theme::FG);
+
+        // Raised alert brows (higher than normal)
+        c.drawFastHLine(cx - 5, cy - 6, 4, Theme::FG);
+        c.drawFastHLine(cx + 1, cy - 6, 4, Theme::FG);
+
+        // Scanning eyes — dart left / center / right every 1.2 s
+        int eyePhase = (int)(ms / 1200) % 3;
+        int eyeOff   = (eyePhase == 0) ? -1 : (eyePhase == 2) ? 1 : 0;
+        c.fillRect(cx - 4 + eyeOff, cy - 3, 3, 2, Theme::FG);
+        c.fillRect(cx + 1 + eyeOff, cy - 3, 2, 2, Theme::FG);
+
+        // Straight watchful mouth
+        c.drawFastHLine(cx - 2, cy + 3, 5, Theme::FG);
+        return;
+    }
+
     // ── Decrypting ────────────────────────────────────────────────
     {
         // Rotating comet: 8 cardinal+diagonal orbit positions

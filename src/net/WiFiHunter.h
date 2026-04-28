@@ -25,6 +25,7 @@ public:
     void init();
     void update(uint32_t ms);
     void clearFindings(uint32_t ms);
+    void setGuardMode(bool g) { _guardMode = g; }
     void pause()  { esp_wifi_set_promiscuous(false); }
     void resume() { esp_wifi_set_promiscuous(true);  }
 
@@ -98,6 +99,7 @@ private:
     uint32_t _dwellStartMs = 0;
     uint32_t _deauthLastMs = 0;
     uint16_t _deauthSeq    = 0;
+    bool     _guardMode = false;
 
     // ── Attack queue ──────────────────────────────────────────
     uint8_t  _attackQueue[MAX_APS] = {};

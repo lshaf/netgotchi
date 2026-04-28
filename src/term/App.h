@@ -36,7 +36,8 @@ public:
     void setPendingBrightness(uint8_t val255) override;
     void setPendingPowerOff() override;
     void     startCrack(const char* pcapPath, const char* dictPath) override;
-    void     startNetgotchi() override;
+    void     startNethunt()  override;
+    void     startNetguard() override;
     uint32_t statsXp()         const override;
     uint32_t statsCaptures()   const override;
     uint32_t statsLevel()      const override;
@@ -81,8 +82,9 @@ private:
     uint32_t _lastCaptureCount      = 0;
     uint32_t _lastApFoundCount      = 0;
     uint32_t _lastDeauthTargetCount = 0;
-    uint32_t _lastEapolEventCount   = 0;
-    uint32_t _statusLogMs           = 0;
+    uint32_t _lastEapolEventCount        = 0;
+    uint32_t _lastExternalDeauthCount    = 0;
+    uint32_t _statusLogMs                = 0;
     uint8_t  _lastChannel           = 0;
     uint32_t _pauseUntilMs          = 0;
     uint8_t  _exhaustPhase          = 0;
@@ -132,9 +134,11 @@ private:
     bool         _pendingCrack    = false;
     uint32_t     _crackStartMs    = 0;
 
-    // ── Netgotchi (hunter) state ──────────────────────────────────
-    bool         _netgotchiRunning = false;
-    void         _stopNetgotchi();
+    // ── Hunt / Guard state ────────────────────────────────────────
+    bool         _nethuntRunning  = false;
+    bool         _netguardRunning = false;
+    void         _stopNethunt();
+    void         _stopNetguard();
     void         _stopCrack();
 
     void _startCrack    ();
