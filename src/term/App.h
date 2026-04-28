@@ -8,6 +8,19 @@
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 
+struct CrackHandshake {
+    char     ssid[33]     = {};
+    uint8_t  ssid_len     = 0;
+    uint8_t  ap[6]        = {};
+    uint8_t  sta[6]       = {};
+    uint8_t  anonce[32]   = {};
+    uint8_t  snonce[32]   = {};
+    uint8_t  mic[16]      = {};
+    uint8_t  eapol[300]   = {};
+    uint16_t eapol_len    = 0;
+    uint8_t  prf_data[76] = {};
+};
+
 class App : public IMenuHost {
 public:
     void init();
@@ -87,19 +100,6 @@ private:
     bool         _menuJustOpened  = false;
 
     // ── Crack state ───────────────────────────────────────────────
-    struct CrackHandshake {
-        char     ssid[33]     = {};
-        uint8_t  ssid_len     = 0;
-        uint8_t  ap[6]        = {};
-        uint8_t  sta[6]       = {};
-        uint8_t  anonce[32]   = {};
-        uint8_t  snonce[32]   = {};
-        uint8_t  mic[16]      = {};
-        uint8_t  eapol[300]   = {};
-        uint16_t eapol_len    = 0;
-        uint8_t  prf_data[76] = {};
-    };
-
     static constexpr int CRACK_QUEUE_DEPTH = 8;
     static constexpr int CRACK_PASS_MAX    = 64;
 

@@ -1,5 +1,6 @@
 #pragma once
 #include "MenuCommand.h"
+#include <cstring>
 
 class CrackCommand : public MenuCommand {
 public:

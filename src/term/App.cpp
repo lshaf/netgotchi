@@ -434,7 +434,7 @@ static const uint8_t* crackParseEapolKey(const uint8_t* frm, uint16_t flen,
     return eapol + 4;
 }
 
-static bool crackParsePcap(const char* path, App::CrackHandshake& hs) {
+static bool crackParsePcap(const char* path, CrackHandshake& hs) {
     memset(&hs, 0, sizeof(hs));
     File f = SD.open(path, FILE_READ);
     if (!f) return false;
