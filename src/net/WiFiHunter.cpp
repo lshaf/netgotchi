@@ -330,13 +330,27 @@ void WiFiHunter::_processBeacon(const RawFrame& f) {
 
     int idx = (int)(ap - _aps);
 
-    // Always (re)store SSID + beacon if not yet known. EAPOL may have
-    // registered this AP earlier with empty SSID; this is where it gets filled.
+    // SSID may not yet be set — EAPOL can register an AP first with empty SSID.
+    // This is where we fill it from the beacon.
     bool ssidJustLearned = false;
     if (ap->ssid[0] == '\0' && ssid[0] != '\0') {
         memcpy(ap->ssid, ssid, sizeof(ssid));
         ssidJustLearned = true;
     }
+
+    // If a valid pcap is already on disk for this AP, skip everything else:
+    // no beacon storage, no file (re)open, no further EAPOL processing.
+    if (ap->ssid[0] != '\0' && _pcapIsComplete(*ap)) {
+        ap->validated = true;
+        ap->pcapCreated = true;
+        _pendingEapolCount[idx] = 0;
+        memset(_pendingEapolLen[idx], 0, sizeof(_pendingEapolLen[idx]));
+        if (wasNew || ssidJustLearned) {
+            Serial.printf("[AP] Skip \"%s\" — pcap already complete\n", ap->ssid);
+        }
+        return;
+    }
+
     if (_beaconLen[idx] == 0) {
         uint16_t stored = (f.len <= MAX_FRAME) ? f.len : MAX_FRAME;
         memcpy(_beaconData[idx], f.data, stored);
@@ -344,11 +358,6 @@ void WiFiHunter::_processBeacon(const RawFrame& f) {
     }
 
     if (wasNew) {
-        if (_pcapIsComplete(*ap)) {
-            ap->validated = true;
-            Serial.printf("[AP] Skip \"%s\" — pcap already complete\n", ssid);
-            return;
-        }
         _apFoundCount++;
         strncpy(_lastFoundSsid, ssid, 32);
         _lastFoundSsid[32] = '\0';
