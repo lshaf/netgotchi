@@ -38,6 +38,7 @@ public:
     void setPendingPowerOff() override;
     void     startCrack(const char* pcapPath, const char* dictPath) override;
     void     startNethunt()  override;
+    void     startNettrap()  override;
     void     startNetguard() override;
     uint32_t statsXp()         const override;
     uint32_t statsCaptures()   const override;
@@ -141,8 +142,10 @@ private:
 
     // ── Hunt / Guard state ────────────────────────────────────────
     bool         _nethuntRunning  = false;
+    bool         _nettrapRunning  = false;
     bool         _netguardRunning = false;
     void         _stopNethunt();
+    void         _stopNettrap();
     void         _stopNetguard();
     void         _stopCrack();
 

@@ -25,6 +25,7 @@ public:
     void init();
     void update(uint32_t ms);
     void clearFindings(uint32_t ms);
+    void setTrapMode(bool t) { _trapMode = t; }
     void pause()  { esp_wifi_set_promiscuous(false); }
     void resume() { esp_wifi_set_promiscuous_rx_cb(_promiscCb); esp_wifi_set_promiscuous(true); }
 
@@ -87,6 +88,7 @@ private:
 
     // ── Timing ────────────────────────────────────────────────
     static constexpr uint32_t DWELL_MS            = 5000;
+    static constexpr uint32_t TRAP_DWELL_MS       = 10000;
     static constexpr uint32_t DWELL_WAIT_MS       = 5000;
     static constexpr uint32_t DEAUTH_INTERVAL_MS  = 2000;
     static constexpr int      MAX_DEAUTH_ATTEMPTS = 3;
@@ -94,6 +96,7 @@ private:
 
     // ── State ─────────────────────────────────────────────────
     Phase    _phase      = Phase::Dwell;
+    bool     _trapMode   = false;
     uint8_t  _channel    = 1;
     uint32_t _dwellStartMs = 0;
     uint32_t _deauthLastMs = 0;

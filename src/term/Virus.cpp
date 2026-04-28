@@ -170,6 +170,43 @@ void Virus::draw(M5Canvas& c, uint32_t ms, State state) {
         return;
     }
 
+    // ── Trap ──────────────────────────────────────────────────────
+    if (state == State::Trap) {
+        // Pulsing beacon antenna: FG → PALE → DIM breath cycle every 1.2s
+        uint32_t beat = ms % 1200;
+        uint16_t ballCol = (beat < 300) ? Theme::FG : (beat < 700) ? Theme::PALE : Theme::DIM;
+        c.drawFastVLine(cx, cy - HH - 3, 3, Theme::DIM);  // stalk
+        c.drawPixel    (cx, cy - HH - 4,    ballCol);     // pulsing ball
+
+        // PALE ear stubs (passive, quiet)
+        c.drawPixel(cx - HW - 1, cy, Theme::PALE);
+        c.drawPixel(cx + HW + 1, cy, Theme::PALE);
+
+        // Head (FG border — actively listening)
+        _head(c, cx, cy, Theme::FG);
+
+        // Curious inverted-V brows: inner corner high (inverse of angry Active brows)
+        c.drawPixel(cx - 8, cy - 5, Theme::PALE);
+        c.drawPixel(cx - 7, cy - 5, Theme::PALE);
+        c.drawPixel(cx - 6, cy - 6, Theme::PALE);  // inner left high
+        c.drawPixel(cx + 5, cy - 6, Theme::PALE);  // inner right high
+        c.drawPixel(cx + 6, cy - 5, Theme::PALE);
+        c.drawPixel(cx + 7, cy - 5, Theme::PALE);
+
+        // Small 2×2 eyes (rounder/more curious than 4×2) with slow blink every 3s
+        bool tblink = (ms % 3000) < 120;
+        if (!tblink) {
+            c.fillRect(cx - 7, cy - 3, 2, 2, Theme::FG);
+            c.fillRect(cx + 5, cy - 3, 2, 2, Theme::FG);
+        }
+
+        // Upturned mouth: flat center + uptick pixel on each end (curious smile)
+        c.drawFastHLine(cx - 4, cy + 6, 9, Theme::PALE);
+        c.drawPixel(cx - 5, cy + 5, Theme::PALE);
+        c.drawPixel(cx + 5, cy + 5, Theme::PALE);
+        return;
+    }
+
     // ── Decrypting ────────────────────────────────────────────────
     {
         // Orbit comet outside the 23×19 head (HW=11, HH=9).

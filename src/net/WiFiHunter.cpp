@@ -92,13 +92,19 @@ void WiFiHunter::update(uint32_t ms) {
     _flush();
 
     if (_phase == Phase::Dwell) {
-        if (ms - _dwellStartMs >= DWELL_MS) {
-            _buildAttackQueue();
-            if (_attackQueueLen > 0) {
-                _phase         = Phase::Attack;
-                _attackQueueIdx = 0;
-                _deauthLastMs   = ms - DEAUTH_INTERVAL_MS - 1; // fire first deauth immediately
-                Serial.printf("[WIFI] Attack: %d targets on ch%d\n", _attackQueueLen, _channel);
+        uint32_t dwell = _trapMode ? TRAP_DWELL_MS : DWELL_MS;
+        if (ms - _dwellStartMs >= dwell) {
+            if (!_trapMode) {
+                _buildAttackQueue();
+                if (_attackQueueLen > 0) {
+                    _phase         = Phase::Attack;
+                    _attackQueueIdx = 0;
+                    _deauthLastMs   = ms - DEAUTH_INTERVAL_MS - 1;
+                    Serial.printf("[WIFI] Attack: %d targets on ch%d\n", _attackQueueLen, _channel);
+                } else {
+                    _hopChannel();
+                    _dwellStartMs = ms;
+                }
             } else {
                 _hopChannel();
                 _dwellStartMs = ms;

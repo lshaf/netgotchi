@@ -13,6 +13,7 @@
 #include "command/PowerOffCommand.h"
 #include "command/CrackCommand.h"
 #include "command/NethuntCommand.h"
+#include "command/NettrapCommand.h"
 #include "command/NetguardCommand.h"
 #include "../core/FastWpaCrack.h"
 #include <freertos/queue.h>
@@ -27,6 +28,7 @@
 #endif
 
 static NethuntCommand    s_nethunt;
+static NettrapCommand    s_nettrap;
 static NetguardCommand   s_netguard;
 static ProfileCommand    s_profile;
 static CrackCommand      s_crack;
@@ -34,7 +36,7 @@ static ThemeCommand      s_theme;
 static BrightnessCommand s_brightness;
 static PowerOffCommand   s_poweroff;
 static MenuCommand*      s_rootItems[] = {
-    &s_nethunt, &s_netguard, &s_profile, &s_crack, &s_theme, &s_brightness, &s_poweroff
+    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_theme, &s_brightness, &s_poweroff
 };
 static constexpr int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
@@ -100,6 +102,7 @@ void App::startCrack(const char* pcapPath, const char* dictPath) {
 }
 void App::startNethunt() {
     _guard.pause();
+    _hunter.setTrapMode(false);
     _hunter.resume();
     _nethuntRunning = true;
     _qPushCmd("service nethunt start");
@@ -110,6 +113,21 @@ void App::_stopNethunt() {
     _nethuntRunning = false;
     _exhaustPhase   = 0;
     _qPushCmd("service nethunt stop");
+    menuClose();
+}
+void App::startNettrap() {
+    _guard.pause();
+    _hunter.setTrapMode(true);
+    _hunter.resume();
+    _nettrapRunning = true;
+    _qPushCmd("service nettrap start");
+    menuClose();
+}
+void App::_stopNettrap() {
+    _hunter.pause();
+    _hunter.setTrapMode(false);
+    _nettrapRunning = false;
+    _qPushCmd("service nettrap stop");
     menuClose();
 }
 void App::startNetguard() {
@@ -309,13 +327,14 @@ void App::_updateTyping(uint32_t ms) {
 // ── Hunting integration ───────────────────────────────────────
 
 void App::_updateHunting(uint32_t ms) {
-    if (!_nethuntRunning && !_netguardRunning) return;
+    if (!_nethuntRunning && !_nettrapRunning && !_netguardRunning) return;
     if (_crackState != CrackState::Idle) return;
     if (ms - _statusLogMs >= 10000) {
         _statusLogMs = ms;
-        uint8_t ch = _nethuntRunning ? _hunter.channel() : _guard.channel();
+        uint8_t ch = (_nethuntRunning || _nettrapRunning) ? _hunter.channel() : _guard.channel();
+        const char* modeStr = _nethuntRunning ? "hunt" : (_nettrapRunning ? "trap" : "guard");
         Serial.printf("[STATUS] mode=%s ch=%d bat=%d%% caps=%lu xp=%lu\n",
-                      _nethuntRunning ? "hunt" : "guard",
+                      modeStr,
                       ch,
                       M5.Power.getBatteryLevel(),
                       (unsigned long)_stats.captures(),
@@ -386,6 +405,46 @@ void App::_updateHunting(uint32_t ms) {
             _lastExternalDeauthCount = edc;
             const char* eid = _hunter.lastExternalDeauthSsid();
             _qPushOut("alert deauth %.32s", (eid && eid[0]) ? eid : "??");
+        }
+
+        uint32_t caps = _hunter.captureCount();
+        if (caps > _lastCaptureCount) {
+            _lastCaptureCount = caps;
+            const char* path  = _hunter.lastCapturePath();
+            const char* fname = strrchr(path, '/');
+            fname = fname ? fname + 1 : path;
+            _stats.onCapture();
+            _stats.save();
+            uint16_t r1 = 0x1000 + (uint16_t)(rand() & 0xCFFF);
+            uint16_t r2 = r1 + (uint16_t)(rand() & 0x0FFF) + 0x100;
+            _qPushCmd("dump 0x%04x..0x%04x >> %.27s", r1, r2, fname);
+        }
+        return;
+    }
+
+    // ── Nettrap path (passive — no deauth) ───────────────────────
+    if (_nettrapRunning) {
+        _hunter.update(ms);
+
+        uint8_t ch = _hunter.channel();
+        if (ch != _lastChannel) {
+            _lastChannel = ch;
+            _qPushCmd("setchannel %d", ch);
+        }
+
+        uint32_t afc = _hunter.apFoundCount();
+        if (afc > _lastApFoundCount) {
+            _lastApFoundCount = afc;
+            const char* ssid = _hunter.lastFoundSsid();
+            _qPushOut("detected %.32s", (ssid && ssid[0]) ? ssid : "<hidden>");
+        }
+
+        uint32_t eec = _hunter.eapolEventCount();
+        if (eec > _lastEapolEventCount) {
+            _lastEapolEventCount = eec;
+            int msg = _hunter.lastEapolMsg();
+            const char* esid = _hunter.lastEapolSsid();
+            _qPushOut("traced eapol M%d %.32s", msg, (esid && esid[0]) ? esid : "??");
         }
 
         uint32_t caps = _hunter.captureCount();
@@ -829,7 +888,7 @@ void App::_handleTouch(uint32_t ms) {
 
     int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
-        nItems = (_nethuntRunning || _netguardRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
+        nItems = (_nethuntRunning || _nettrapRunning || _netguardRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
@@ -902,6 +961,7 @@ void App::_handleTouch(uint32_t ms) {
 
     if (_menuState == MenuState::Root) {
         if (_nethuntRunning)                        { _stopNethunt();   return; }
+        if (_nettrapRunning)                        { _stopNettrap();   return; }
         if (_netguardRunning)                       { _stopNetguard();  return; }
         if (_crackState == CrackState::Running)     { _stopCrack();     return; }
         s_rootItems[itemIdx]->execute(*this);
@@ -993,6 +1053,7 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
     if      (_crackState != CrackState::Idle)       vs = Virus::State::Decrypting;
     else if (_nethuntRunning && _exhaustPhase != 0) vs = Virus::State::Sleep;
     else if (_nethuntRunning)                       vs = Virus::State::Active;
+    else if (_nettrapRunning)                       vs = Virus::State::Trap;
     else if (_netguardRunning)                      vs = Virus::State::Guard;
     else                                            vs = Virus::State::Idle;
     Virus::draw(c, ms, vs);
@@ -1095,7 +1156,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
 
     int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
-        nItems = (_nethuntRunning || _netguardRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
+        nItems = (_nethuntRunning || _nettrapRunning || _netguardRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
@@ -1154,7 +1215,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
         if (itemIdx < 0 || itemIdx >= nItems) continue;
 
         if (_menuState == MenuState::Root) {
-            const bool locked = _nethuntRunning || _netguardRunning || (_crackState == CrackState::Running);
+            const bool locked = _nethuntRunning || _nettrapRunning || _netguardRunning || (_crackState == CrackState::Running);
             const char* lbl = locked ? "stop" : s_rootItems[itemIdx]->label();
             drawItem(slot, lbl, true);
         } else if (_menuState == MenuState::Sub && _activeSubCmd) {

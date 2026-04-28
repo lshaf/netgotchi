@@ -16,6 +16,7 @@ public:
     virtual void setPendingPowerOff() = 0;
     virtual void     startCrack(const char* pcapPath, const char* dictPath) = 0;
     virtual void     startNethunt()  = 0;
+    virtual void     startNettrap()  = 0;
     virtual void     startNetguard() = 0;
     virtual uint32_t statsXp()         const = 0;
     virtual uint32_t statsCaptures()   const = 0;

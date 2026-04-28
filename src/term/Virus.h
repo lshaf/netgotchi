@@ -4,7 +4,7 @@
 
 class Virus {
 public:
-    enum class State : uint8_t { Idle, Active, Guard, Decrypting, Sleep };
+    enum class State : uint8_t { Idle, Active, Guard, Decrypting, Sleep, Trap };
 
     static void draw(M5Canvas& c, uint32_t ms, State state);
 
