@@ -22,7 +22,7 @@ public:
     void setPendingTheme(int8_t idx) override;
     void setPendingBrightness(uint8_t val255) override;
     void setPendingPowerOff() override;
-    void     startCrack()                     override;
+    void     startCrack(const char* pcapPath, const char* dictPath) override;
     uint32_t statsXp()         const override;
     uint32_t statsCaptures()   const override;
     uint32_t statsLevel()      const override;
@@ -107,6 +107,7 @@ private:
 
     struct CrackCtx {
         CrackHandshake    hs;
+        char              wordlistPath[64] = {};
         QueueHandle_t     queue        = nullptr;
         SemaphoreHandle_t doneSem      = nullptr;
         TaskHandle_t      workerHandle = nullptr;
@@ -124,6 +125,7 @@ private:
     CrackState   _crackState      = CrackState::Idle;
     CrackCtx     _crackCtx        = {};
     TaskHandle_t _crackProdHandle = nullptr;
+    char         _crackPcapPath[64] = {};
 
     void _startCrack    ();
     void _updateCracking(uint32_t ms);

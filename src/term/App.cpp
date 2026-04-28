@@ -89,7 +89,11 @@ void App::openSubMenu(MenuCommand* cmd) { _activeSubCmd = cmd; _menuState = Menu
 void App::setPendingTheme(int8_t idx)     { _pendingTheme  = idx; }
 void App::setPendingBrightness(uint8_t v) { _pendingBright = (int)v; }
 void App::setPendingPowerOff()            { _pendingPowerOff = true; }
-void     App::startCrack()            { _startCrack(); }
+void App::startCrack(const char* pcapPath, const char* dictPath) {
+    strncpy(_crackPcapPath,           pcapPath, sizeof(_crackPcapPath)           - 1);
+    strncpy(_crackCtx.wordlistPath,   dictPath, sizeof(_crackCtx.wordlistPath)   - 1);
+    _startCrack();
+}
 uint32_t App::statsXp()         const { return _stats.xp(); }
 uint32_t App::statsCaptures()   const { return _stats.captures(); }
 uint32_t App::statsLevel()      const { return _stats.level(); }
@@ -121,6 +125,7 @@ void App::init() {
         Serial.printf("[SD] OK  %lluMB total\n", SD.totalBytes() / (1024 * 1024));
         SD.mkdir("/netgotchi");
         SD.mkdir("/netgotchi/eapol");
+        SD.mkdir("/netgotchi/dictionaries");
     } else {
         Serial.println("[SD] Mount failed — captures won't be saved");
     }
@@ -597,18 +602,41 @@ void App::_crackProdTask(void* param) {
         return xQueueSend(ctx->queue, &entry, 0) == pdTRUE;
     };
 
-    int i = 0;
-    while (i < kCrackPasswordCount && !ctx->stop && !ctx->found) {
-        size_t n = strlen(kCrackPasswords[i]);
-        if (!sendToWorker(kCrackPasswords[i], n)) {
-            tryHere(kCrackPasswords[i], n); i++;
-        } else {
-            i++;
-            if (i < kCrackPasswordCount && !ctx->stop && !ctx->found) {
-                tryHere(kCrackPasswords[i], strlen(kCrackPasswords[i])); i++;
+    if (strcmp(ctx->wordlistPath, "builtin") == 0) {
+        int i = 0;
+        while (i < kCrackPasswordCount && !ctx->stop && !ctx->found) {
+            size_t n = strlen(kCrackPasswords[i]);
+            if (!sendToWorker(kCrackPasswords[i], n)) {
+                tryHere(kCrackPasswords[i], n); i++;
+            } else {
+                i++;
+                if (i < kCrackPasswordCount && !ctx->stop && !ctx->found) {
+                    tryHere(kCrackPasswords[i], strlen(kCrackPasswords[i])); i++;
+                }
             }
+            ctx->bytesDone = (uint32_t)i;
         }
-        ctx->bytesDone = (uint32_t)i;
+    } else {
+        char line[64], line2[64];
+        File f = SD.open(ctx->wordlistPath, FILE_READ);
+        if (f) {
+            while (f.available() && !ctx->stop && !ctx->found) {
+                size_t n = f.readBytesUntil('\n', line, 63);
+                line[n] = '\0';
+                while (n > 0 && (line[n-1] == '\r' || line[n-1] == '\n')) line[--n] = '\0';
+                if (n < 8 || n > 63) { ctx->bytesDone = (uint32_t)f.position(); continue; }
+                if (!sendToWorker(line, n)) {
+                    tryHere(line, n);
+                } else if (f.available() && !ctx->stop && !ctx->found) {
+                    size_t n2 = f.readBytesUntil('\n', line2, 63);
+                    line2[n2] = '\0';
+                    while (n2 > 0 && (line2[n2-1] == '\r' || line2[n2-1] == '\n')) line2[--n2] = '\0';
+                    if (n2 >= 8 && n2 <= 63) tryHere(line2, n2);
+                }
+                ctx->bytesDone = (uint32_t)f.position();
+            }
+            f.close();
+        }
     }
 
     CrackPwEntry poison; memset(&poison, 0, sizeof(poison));
@@ -621,42 +649,35 @@ void App::_crackProdTask(void* param) {
 void App::_startCrack() {
     _qPushCmd("crack");
 
-    // Find a parseable PCAP in /netgotchi/eapol/
     CrackHandshake hs;
-    char pcapPath[80] = {};
-    File dir = SD.open("/netgotchi/eapol");
-    if (dir) {
-        File f = dir.openNextFile();
-        while (f) {
-            const char* name = f.name();
-            // name() on ESP32 Arduino returns basename only
-            snprintf(pcapPath, sizeof(pcapPath), "/netgotchi/eapol/%s", name);
-            f.close();
-            int nl = (int)strlen(pcapPath);
-            if (nl >= 5 && strcmp(pcapPath + nl - 5, ".pcap") == 0) {
-                if (crackParsePcap(pcapPath, hs)) break;
-            }
-            pcapPath[0] = '\0';
-            f = dir.openNextFile();
-        }
-        dir.close();
-    }
-
-    if (pcapPath[0] == '\0') {
-        _qPushOut("no eapol captures found");
+    if (!crackParsePcap(_crackPcapPath, hs)) {
+        _qPushOut("handshake parse failed");
         return;
     }
 
     _qPushOut("service stop");
     _qPushOut("target: %.32s", hs.ssid);
-
     _hunter.pause();
 
+    // Preserve wordlistPath — it was set before _startCrack() was called
+    char wlPath[64];
+    strncpy(wlPath, _crackCtx.wordlistPath, sizeof(wlPath) - 1);
+    wlPath[sizeof(wlPath)-1] = '\0';
+
     memset(&_crackCtx, 0, sizeof(_crackCtx));
-    _crackCtx.hs        = hs;
-    _crackCtx.fileSize  = (uint32_t)kCrackPasswordCount;
-    _crackCtx.queue     = xQueueCreate(CRACK_QUEUE_DEPTH, sizeof(CrackPwEntry));
-    _crackCtx.doneSem   = xSemaphoreCreateBinary();
+    _crackCtx.hs = hs;
+    strncpy(_crackCtx.wordlistPath, wlPath, sizeof(_crackCtx.wordlistPath) - 1);
+
+    if (strcmp(_crackCtx.wordlistPath, "builtin") == 0) {
+        _crackCtx.fileSize = (uint32_t)kCrackPasswordCount;
+    } else {
+        File wf = SD.open(_crackCtx.wordlistPath, FILE_READ);
+        _crackCtx.fileSize = wf ? (uint32_t)wf.size() : 1;
+        if (wf) wf.close();
+    }
+
+    _crackCtx.queue   = xQueueCreate(CRACK_QUEUE_DEPTH, sizeof(CrackPwEntry));
+    _crackCtx.doneSem = xSemaphoreCreateBinary();
 
     xTaskCreatePinnedToCore(_crackWorkerTask, "wpa2_w", 8192, &_crackCtx, 1,
                             &_crackCtx.workerHandle, 0);

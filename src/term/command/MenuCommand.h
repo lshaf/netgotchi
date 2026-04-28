@@ -14,7 +14,7 @@ public:
     virtual void setPendingTheme(int8_t idx) = 0;
     virtual void setPendingBrightness(uint8_t val255) = 0;
     virtual void setPendingPowerOff() = 0;
-    virtual void     startCrack()             = 0;
+    virtual void     startCrack(const char* pcapPath, const char* dictPath) = 0;
     virtual uint32_t statsXp()         const = 0;
     virtual uint32_t statsCaptures()   const = 0;
     virtual uint32_t statsLevel()      const = 0;
