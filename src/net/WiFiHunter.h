@@ -45,8 +45,9 @@ public:
     const char* lastExternalDeauthSsid() const { return _lastExternalDeauthSsid; }
 
 private:
-    static constexpr int MAX_FRAME = 400;
-    static constexpr int RING_SIZE = 32;
+    static constexpr int MAX_FRAME       = 400;
+    static constexpr int RING_SIZE       = 32;
+    static constexpr int MAX_PENDING_PER_AP = 4;
 
     struct RawFrame {
         uint8_t  data[MAX_FRAME];
@@ -77,6 +78,11 @@ private:
     void _buildFilePath(char* buf, int bufLen, const ApInfo& ap);
     bool _pcapIsComplete(const ApInfo& ap);
 
+    void _ensurePcapWithBeacon(ApInfo& ap, int idx);
+    void _flushPendingEapol  (ApInfo& ap, int idx);
+    void _bufferEapol(int idx, const uint8_t* data, uint16_t len);
+    void _validateEapol(ApInfo& ap, const uint8_t* pay, uint16_t flen);
+
     static int _parseEapolMsg(const uint8_t* data, uint16_t len, int* snapOffOut);
 
     // ── Timing ────────────────────────────────────────────────
@@ -104,6 +110,12 @@ private:
 
     uint8_t  _beaconData[MAX_APS][MAX_FRAME]{};
     uint16_t _beaconLen[MAX_APS]{};
+
+    // Per-AP buffer of EAPOL frames seen before SSID/beacon known.
+    // Flushed to PCAP after first beacon writes the file header.
+    uint8_t  _pendingEapol   [MAX_APS][MAX_PENDING_PER_AP][MAX_FRAME]{};
+    uint16_t _pendingEapolLen[MAX_APS][MAX_PENDING_PER_AP]{};
+    uint8_t  _pendingEapolCount[MAX_APS]{};
 
     // ── Event counters (polled by App) ────────────────────────
     uint32_t _captureCount          = 0;

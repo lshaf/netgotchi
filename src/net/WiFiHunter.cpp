@@ -62,6 +62,8 @@ void WiFiHunter::clearFindings(uint32_t ms) {
     _apCount        = 0;
     memset(_aps,      0, sizeof(_aps));
     memset(_beaconLen, 0, sizeof(_beaconLen));   // lengths zeroed; raw data left (overwritten on next use)
+    memset(_pendingEapolCount, 0, sizeof(_pendingEapolCount));
+    memset(_pendingEapolLen,   0, sizeof(_pendingEapolLen));
 
     _attackQueueLen  = 0;
     _attackQueueIdx  = 0;
@@ -316,28 +318,160 @@ void WiFiHunter::_processBeacon(const RawFrame& f) {
         ie += 2 + iel;
     }
 
+    bool wasNew = false;
     if (!ap) {
         ap = _registerAp(bssid);
         if (!ap) return;
         ap->channel = f.channel;
+        wasNew = true;
+    } else {
+        ap->channel = f.channel;
+    }
+
+    int idx = (int)(ap - _aps);
+
+    // Always (re)store SSID + beacon if not yet known. EAPOL may have
+    // registered this AP earlier with empty SSID; this is where it gets filled.
+    bool ssidJustLearned = false;
+    if (ap->ssid[0] == '\0' && ssid[0] != '\0') {
         memcpy(ap->ssid, ssid, sizeof(ssid));
-        int idx = (int)(ap - _aps);
+        ssidJustLearned = true;
+    }
+    if (_beaconLen[idx] == 0) {
         uint16_t stored = (f.len <= MAX_FRAME) ? f.len : MAX_FRAME;
         memcpy(_beaconData[idx], f.data, stored);
         _beaconLen[idx] = stored;
+    }
 
+    if (wasNew) {
         if (_pcapIsComplete(*ap)) {
             ap->validated = true;
             Serial.printf("[AP] Skip \"%s\" — pcap already complete\n", ssid);
             return;
         }
-
         _apFoundCount++;
         strncpy(_lastFoundSsid, ssid, 32);
         _lastFoundSsid[32] = '\0';
         Serial.printf("[AP] New %02X:%02X:%02X:%02X:%02X:%02X ch%d \"%s\"\n",
                       bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
                       f.channel, ssid);
+    } else if (ssidJustLearned) {
+        _apFoundCount++;
+        strncpy(_lastFoundSsid, ssid, 32);
+        _lastFoundSsid[32] = '\0';
+        Serial.printf("[AP] SSID learned for %02X:%02X:%02X:%02X:%02X:%02X \"%s\"\n",
+                      bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], ssid);
+    }
+
+    // If SSID + beacon now both known, write header + beacon to PCAP
+    // and flush any EAPOL frames that were buffered while SSID was unknown.
+    if (ap->ssid[0] != '\0' && _beaconLen[idx] > 0) {
+        _ensurePcapWithBeacon(*ap, idx);
+        _flushPendingEapol(*ap, idx);
+    }
+}
+
+// ── PCAP create + beacon write (idempotent) ──────────────────
+
+void WiFiHunter::_ensurePcapWithBeacon(ApInfo& ap, int idx) {
+    if (ap.pcapCreated) return;
+    if (ap.ssid[0] == '\0' || _beaconLen[idx] == 0) return;
+
+    char path[64];
+    _buildFilePath(path, sizeof(path), ap);
+
+    // FILE_WRITE on ESP32-Arduino maps to "w" which truncates an existing file.
+    // Only open in write mode when the file is genuinely new — otherwise the
+    // global header gets wiped and subsequent FILE_APPEND writes leave a
+    // header-less pcap that parsers reject ("bad pcap header").
+    if (!SD.exists(path)) {
+        File pcap = SD.open(path, FILE_WRITE);
+        if (!pcap) {
+            Serial.printf("[PCAP] Open failed: %s\n", path);
+            return;
+        }
+        _writePcapHeader(pcap);
+        _appendPcapFrame(pcap, _beaconData[idx], _beaconLen[idx]);
+        pcap.close();
+    }
+    ap.pcapCreated = true;
+}
+
+// ── Flush per-AP buffered EAPOL frames after PCAP exists ─────
+
+void WiFiHunter::_flushPendingEapol(ApInfo& ap, int idx) {
+    if (!ap.pcapCreated || _pendingEapolCount[idx] == 0) return;
+
+    char path[64];
+    _buildFilePath(path, sizeof(path), ap);
+    File pcap = SD.open(path, FILE_APPEND);
+    if (!pcap) return;
+
+    for (int i = 0; i < _pendingEapolCount[idx]; i++) {
+        const uint8_t* data = _pendingEapol[idx][i];
+        uint16_t       len  = _pendingEapolLen[idx][i];
+        if (len == 0) continue;
+        _appendPcapFrame(pcap, data, len);
+        _validateEapol(ap, data, len);
+        if (ap.validated) {
+            _captureCount++;
+            _buildFilePath(_lastCapturePath, sizeof(_lastCapturePath), ap);
+            Serial.printf("[PCAP] Handshake captured (flushed): \"%s\" (total=%lu)\n",
+                          ap.ssid, (unsigned long)_captureCount);
+        }
+    }
+    pcap.close();
+
+    _pendingEapolCount[idx] = 0;
+    memset(_pendingEapolLen[idx], 0, sizeof(_pendingEapolLen[idx]));
+}
+
+// ── Buffer one EAPOL frame for an AP without SSID yet ────────
+
+void WiFiHunter::_bufferEapol(int idx, const uint8_t* data, uint16_t len) {
+    uint8_t n = _pendingEapolCount[idx];
+    uint16_t copyLen = (len <= MAX_FRAME) ? len : MAX_FRAME;
+
+    if (n < MAX_PENDING_PER_AP) {
+        memcpy(_pendingEapol[idx][n], data, copyLen);
+        _pendingEapolLen[idx][n] = copyLen;
+        _pendingEapolCount[idx]  = n + 1;
+        return;
+    }
+    // Buffer full: drop oldest, shift, append newest
+    for (int i = 1; i < MAX_PENDING_PER_AP; i++) {
+        memcpy(_pendingEapol[idx][i - 1], _pendingEapol[idx][i], _pendingEapolLen[idx][i]);
+        _pendingEapolLen[idx][i - 1] = _pendingEapolLen[idx][i];
+    }
+    int last = MAX_PENDING_PER_AP - 1;
+    memcpy(_pendingEapol[idx][last], data, copyLen);
+    _pendingEapolLen[idx][last] = copyLen;
+}
+
+// ── M1+M2 STA-MAC pairing (writes ApInfo nonces/MACs) ────────
+
+void WiFiHunter::_validateEapol(ApInfo& ap, const uint8_t* pay, uint16_t flen) {
+    int snapOff = -1;
+    int msg = _parseEapolMsg(pay, flen, &snapOff);
+    if (msg == 0 || snapOff < 0) return;
+
+    const uint8_t* e = pay + snapOff + 8;
+
+    if (msg == 1 || msg == 3) {
+        // M1/M3: AP→STA. addr1 = DA = STA.
+        memcpy(ap.anonce,   e + 17, 32);
+        memcpy(ap.staMacM1, pay + 4, 6);
+        ap.hasAnonce = true;
+        if (ap.hasM2 && memcmp(ap.staMacM1, ap.staMacM2, 6) == 0) {
+            ap.validated = true;
+        }
+    } else if (msg == 2) {
+        // M2: STA→AP. addr2 = SA = STA.
+        memcpy(ap.staMacM2, pay + 10, 6);
+        ap.hasM2 = true;
+        if (ap.hasAnonce && memcmp(ap.staMacM1, ap.staMacM2, 6) == 0) {
+            ap.validated = true;
+        }
     }
 }
 
@@ -380,7 +514,7 @@ void WiFiHunter::_processEapol(const RawFrame& f) {
         memcpy(bssid, pay + 16, 6);  // IBSS/WDS: addr3 = BSSID
     }
 
-    // Classify EAPOL message type and get SNAP body offset
+    // Classify EAPOL message type
     int snapOff = -1;
     int msg = _parseEapolMsg(pay, f.len, &snapOff);
     if (msg == 0) return;  // not a recognizable handshake message
@@ -390,45 +524,37 @@ void WiFiHunter::_processEapol(const RawFrame& f) {
         ap = _registerAp(bssid);
         if (!ap) return;
         ap->channel = f.channel;
-        if (_pcapIsComplete(*ap)) {
-            ap->validated = true;
-            return;
-        }
     }
     if (ap->validated) return;
+
+    int idx = (int)(ap - _aps);
 
     _eapolEventCount++;
     _lastEapolMsg = msg;
     strncpy(_lastEapolSsid, ap->ssid, 32);
     _lastEapolSsid[32] = '\0';
 
-    Serial.printf("[EAPOL] M%d %02X:%02X:%02X:%02X:%02X:%02X ch%d\n",
+    Serial.printf("[EAPOL] M%d %02X:%02X:%02X:%02X:%02X:%02X ch%d ssid=\"%s\"\n",
                   msg,
                   bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
-                  f.channel);
+                  f.channel, ap->ssid);
 
-    // Create PCAP on first EAPOL if not yet done
-    char path[64];
-    _buildFilePath(path, sizeof(path), *ap);
-
-    if (!ap->pcapCreated) {
-        bool newFile = !SD.exists(path);
-        File pcap = SD.open(path, FILE_WRITE);
-        if (!pcap) {
-            Serial.printf("[PCAP] Open failed: %s\n", path);
-            return;
-        }
-        if (newFile) {
-            _writePcapHeader(pcap);
-            int idx = (int)(ap - _aps);
-            if (_beaconLen[idx] > 0)
-                _appendPcapFrame(pcap, _beaconData[idx], _beaconLen[idx]);
-        }
-        pcap.close();
-        ap->pcapCreated = true;
+    // SSID + beacon must be known before writing the PCAP — otherwise
+    // the resulting file has empty SSID in its name and no beacon record,
+    // which the brute-force parser cannot resolve back to an SSID.
+    if (ap->ssid[0] == '\0' || _beaconLen[idx] == 0) {
+        _bufferEapol(idx, f.data, f.len);
+        _validateEapol(*ap, pay, f.len);
+        // Don't count as a capture yet — file isn't on disk.
+        return;
     }
 
-    // Append this EAPOL frame
+    _ensurePcapWithBeacon(*ap, idx);
+    _flushPendingEapol(*ap, idx);  // drain any earlier-buffered frames first
+
+    // Append the current frame
+    char path[64];
+    _buildFilePath(path, sizeof(path), *ap);
     {
         File pcap = SD.open(path, FILE_APPEND);
         if (pcap) {
@@ -437,32 +563,14 @@ void WiFiHunter::_processEapol(const RawFrame& f) {
         }
     }
 
-    // Update handshake pairing state
-    const uint8_t* e = pay + snapOff + 8;  // EAPOL body
-
-    if (msg == 1 || msg == 3) {
-        // ANonce from AP; addr1 = DA = STA MAC
-        memcpy(ap->anonce,   e + 17,    32);
-        memcpy(ap->staMacM1, pay + 4,    6);
-        ap->hasAnonce = true;
-        if (ap->hasM2 && memcmp(ap->staMacM1, ap->staMacM2, 6) == 0) {
-            ap->validated = true;
-            _captureCount++;
-            _buildFilePath(_lastCapturePath, sizeof(_lastCapturePath), *ap);
-            Serial.printf("[PCAP] Handshake captured: \"%s\" (total=%lu)\n",
-                          ap->ssid, (unsigned long)_captureCount);
-        }
-    } else if (msg == 2) {
-        // SNonce from STA; addr2 = SA = STA MAC
-        memcpy(ap->staMacM2, pay + 10, 6);
-        ap->hasM2 = true;
-        if (ap->hasAnonce && memcmp(ap->staMacM1, ap->staMacM2, 6) == 0) {
-            ap->validated = true;
-            _captureCount++;
-            _buildFilePath(_lastCapturePath, sizeof(_lastCapturePath), *ap);
-            Serial.printf("[PCAP] Handshake captured: \"%s\" (total=%lu)\n",
-                          ap->ssid, (unsigned long)_captureCount);
-        }
+    // Pairing: M1/M3 + M2 with matching STA MAC
+    bool wasValid = ap->validated;
+    _validateEapol(*ap, pay, f.len);
+    if (ap->validated && !wasValid) {
+        _captureCount++;
+        _buildFilePath(_lastCapturePath, sizeof(_lastCapturePath), *ap);
+        Serial.printf("[PCAP] Handshake captured: \"%s\" (total=%lu)\n",
+                      ap->ssid, (unsigned long)_captureCount);
     }
 }
 
