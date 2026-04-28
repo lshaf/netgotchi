@@ -9,19 +9,15 @@ void ProfileCommand::execute(IMenuHost& host) {
 
     char buf[56];
 
-    snprintf(buf, sizeof(buf), "battery: %d%%%s",
+    snprintf(buf, sizeof(buf), "batt:  %d%%%s",
              host.statsBattery(), host.statsCharging() ? " [chg]" : "");
     host.outPush(buf);
 
-    uint32_t lvCur  = host.statsLevel();
-    uint32_t lvNext = lvCur + 1;
-    uint32_t prog   = host.statsXpProgress();
-    snprintf(buf, sizeof(buf), "lv:    %lu → %lu", (unsigned long)lvCur, (unsigned long)lvNext);
+    uint32_t lvCur = host.statsLevel();
+    uint32_t prog  = host.statsXpProgress();
+    snprintf(buf, sizeof(buf), "lv:    %lu", (unsigned long)lvCur);
     host.outPush(buf);
     snprintf(buf, sizeof(buf), "xp:    %lu / 100 (%lu%%)", (unsigned long)prog, (unsigned long)prog);
-    host.outPush(buf);
-
-    snprintf(buf, sizeof(buf), "brain: %lu cap", (unsigned long)host.statsCaptures());
     host.outPush(buf);
 
     uint32_t fH = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)

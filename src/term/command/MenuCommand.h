@@ -34,5 +34,6 @@ public:
     virtual const char* subLabel(int idx)       const { (void)idx; return ""; }
     virtual bool        subIsActive(int idx)    const { (void)idx; return false; }
     virtual int         subItemH()              const { return 18; }
+    virtual const char* inputHint()             const { return label(); }
     virtual void onSubSelect(IMenuHost& host, int idx) { (void)host; (void)idx; }
 };

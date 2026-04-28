@@ -126,6 +126,7 @@ private:
     CrackCtx     _crackCtx        = {};
     TaskHandle_t _crackProdHandle = nullptr;
     char         _crackPcapPath[64] = {};
+    bool         _pendingCrack    = false;
 
     void _startCrack    ();
     void _updateCracking(uint32_t ms);

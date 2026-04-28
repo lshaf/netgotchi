@@ -3,92 +3,70 @@
 #include <cstring>
 #include <cstdio>
 
-// ── execute ───────────────────────────────────────────────────
-
 void CrackCommand::execute(IMenuHost& host) {
-    _state = kMenu;
+    _loadPcapList();
+    _state = kPcap;
     host.openSubMenu(this);
 }
 
-// ── Sub-menu geometry ─────────────────────────────────────────
-
 int CrackCommand::subCount() const {
-    switch (_state) {
-        case kMenu: return _canStart() ? 3 : 2;        // [pcap] [dict] ([start])
-        case kPcap: return _fileCount + 1;              // files + [back]
-        case kDict: return _fileCount + 2;              // files + [built in] + [back]
-    }
-    return 0;
+    if (_state == kPcap) return _fileCount + 1;          // files + [back]
+    return _fileCount + 2;                                // files + [built in] + [back]
 }
-
-int CrackCommand::subItemH() const {
-    return (_state == kMenu) ? 18 : 14;
-}
-
-// ── Labels ────────────────────────────────────────────────────
 
 const char* CrackCommand::subLabel(int idx) const {
-    if (_state == kMenu) {
-        if (idx == 0) {
-            if (_selPcap[0])
-                snprintf(_lbl0, sizeof(_lbl0), "pcap: %.38s", _basename(_selPcap));
-            else
-                snprintf(_lbl0, sizeof(_lbl0), "pcap: (none)");
-            return _lbl0;
-        }
-        if (idx == 1) {
-            if (_selDict[0] == '\0')
-                snprintf(_lbl1, sizeof(_lbl1), "dict: (none)");
-            else if (strcmp(_selDict, "builtin") == 0)
-                snprintf(_lbl1, sizeof(_lbl1), "dict: built in");
-            else
-                snprintf(_lbl1, sizeof(_lbl1), "dict: %.38s", _basename(_selDict));
-            return _lbl1;
-        }
-        return "start";
-    }
-
     if (_state == kPcap) {
         if (idx < _fileCount) return _fileNames[idx];
         return "back";
     }
-
     // kDict
     if (idx < _fileCount) return _fileNames[idx];
     if (idx == _fileCount) return "built in";
     return "back";
 }
 
-// ── Selection ─────────────────────────────────────────────────
+const char* CrackCommand::inputHint() const {
+    if (_state == kPcap) {
+        strncpy(_hint, "crack", sizeof(_hint) - 1);
+    } else {
+        snprintf(_hint, sizeof(_hint), "crack %.42s", _basename(_selPcap));
+    }
+    return _hint;
+}
 
 void CrackCommand::onSubSelect(IMenuHost& host, int idx) {
-    if (_state == kMenu) {
-        if (idx == 0) { _loadPcapList(); _state = kPcap; }
-        else if (idx == 1) { _loadDictList(); _state = kDict; }
-        else if (idx == 2 && _canStart()) {
-            host.startCrack(_selPcap, _selDict);
-            host.menuClose();
+    if (_state == kPcap) {
+        if (idx < _fileCount) {
+            strncpy(_selPcap, _filePaths[idx], sizeof(_selPcap) - 1);
+            _loadDictList();
+            _state = kDict;
+        } else {
+            host.menuBack();
         }
         return;
     }
 
-    if (_state == kPcap) {
-        if (idx < _fileCount)
-            strncpy(_selPcap, _filePaths[idx], sizeof(_selPcap) - 1);
-        _state = kMenu;
+    // kDict — build full command, push it, then trigger crack
+    const char* dictPath = nullptr;
+    const char* dictName = nullptr;
+    if (idx < _fileCount) {
+        dictPath = _filePaths[idx];
+        dictName = _basename(_filePaths[idx]);
+    } else if (idx == _fileCount) {
+        dictPath = "builtin";
+        dictName = "builtin";
+    } else {
+        _loadPcapList();
+        _state = kPcap;
         return;
     }
 
-    // kDict
-    if (idx < _fileCount) {
-        strncpy(_selDict, _filePaths[idx], sizeof(_selDict) - 1);
-    } else if (idx == _fileCount) {
-        strncpy(_selDict, "builtin", sizeof(_selDict) - 1);
-    }
-    _state = kMenu;
+    char cmd[52];
+    snprintf(cmd, sizeof(cmd), "crack %.24s %.20s", _basename(_selPcap), dictName);
+    host.cmdPush(cmd);
+    host.startCrack(_selPcap, dictPath);
+    host.menuClose();
 }
-
-// ── File listing ──────────────────────────────────────────────
 
 void CrackCommand::_loadPcapList() {
     _fileCount = 0;

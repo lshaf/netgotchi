@@ -261,6 +261,10 @@ void App::_updateTyping(uint32_t ms) {
             _menuState = MenuState::PowerWait;
             _powerOffMs = ms;
         }
+        if (_pendingCrack) {
+            _pendingCrack = false;
+            _startCrack();
+        }
     }
 }
 
@@ -434,17 +438,25 @@ static const uint8_t* crackParseEapolKey(const uint8_t* frm, uint16_t flen,
     return eapol + 4;
 }
 
-static bool crackParsePcap(const char* path, CrackHandshake& hs) {
+// Reason codes filled by crackParsePcap.
+//   0 = success   1 = open failed   2 = bad pcap magic
+//   3 = no M1     4 = no M2 paired  5 = no SSID (no beacon, empty filename)
+static bool crackParsePcap(const char* path, CrackHandshake& hs, int& reason) {
+    reason = 0;
     memset(&hs, 0, sizeof(hs));
     File f = SD.open(path, FILE_READ);
-    if (!f) return false;
+    if (!f) { reason = 1; return false; }
 
     uint8_t gh[24];
-    if (f.read(gh, 24) != 24 ||
-        !(gh[0]==0xD4&&gh[1]==0xC3&&gh[2]==0xB2&&gh[3]==0xA1)) { f.close(); return false; }
-
-    uint32_t linktype = (uint32_t)gh[20]|((uint32_t)gh[21]<<8)|
-                        ((uint32_t)gh[22]<<16)|((uint32_t)gh[23]<<24);
+    uint32_t linktype = 105;  // default: LINKTYPE_IEEE802_11
+    if (f.read(gh, 24) != 24) { f.close(); reason = 2; return false; }
+    if (gh[0]==0xD4&&gh[1]==0xC3&&gh[2]==0xB2&&gh[3]==0xA1) {
+        linktype = (uint32_t)gh[20]|((uint32_t)gh[21]<<8)|
+                   ((uint32_t)gh[22]<<16)|((uint32_t)gh[23]<<24);
+    } else {
+        // Header-less pcap (older capture bug). Rewind and parse as raw records.
+        f.seek(0);
+    }
 
     bool gotAnonce = false, gotM2 = false;
     uint8_t lastAnonce[32]={}, lastAp[6]={}, lastSta[6]={};
@@ -531,7 +543,10 @@ static bool crackParsePcap(const char* path, CrackHandshake& hs) {
         }
     }
     f.close();
-    if (!gotM2) return false;
+    if (!gotM2) {
+        reason = gotAnonce ? 4 : 3;
+        return false;
+    }
 
     // SSID fallback from filename
     if (hs.ssid[0]=='\0') {
@@ -543,7 +558,7 @@ static bool crackParsePcap(const char* path, CrackHandshake& hs) {
             memcpy(hs.ssid, us+1, n); hs.ssid[n]='\0';
             hs.ssid_len=(uint8_t)n;
         }
-        if (hs.ssid[0]=='\0') return false;
+        if (hs.ssid[0]=='\0') { reason = 5; return false; }
     }
 
     // Build PRF data
@@ -647,11 +662,19 @@ void App::_crackProdTask(void* param) {
 }
 
 void App::_startCrack() {
-    _qPushCmd("crack");
-
     CrackHandshake hs;
-    if (!crackParsePcap(_crackPcapPath, hs)) {
-        _qPushOut("handshake parse failed");
+    int reason = 0;
+    if (!crackParsePcap(_crackPcapPath, hs, reason)) {
+        const char* msg;
+        switch (reason) {
+            case 1:  msg = "open failed";       break;
+            case 2:  msg = "bad pcap header";   break;
+            case 3:  msg = "no M1 in pcap";     break;
+            case 4:  msg = "no M2 paired";      break;
+            case 5:  msg = "no SSID in pcap";   break;
+            default: msg = "parse failed";      break;
+        }
+        _qPushOut("handshake %s", msg);
         return;
     }
 
@@ -990,7 +1013,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
     c.drawString("$ ", MARGIN, INPUT_Y);
 
     const char* inputText = (_menuState == MenuState::Sub && _activeSubCmd)
-                            ? _activeSubCmd->label() : "";
+                            ? _activeSubCmd->inputHint() : "";
     const int textX = MARGIN + 2 * CHAR_W;
     if (inputText[0]) c.drawString(inputText, textX, INPUT_Y);
     if (_cursorOn) {
