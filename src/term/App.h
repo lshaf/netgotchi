@@ -1,5 +1,6 @@
 #pragma once
 #include "../net/WiFiHunter.h"
+#include "../net/WifiGuard.h"
 #include "Stats.h"
 #include "command/MenuCommand.h"
 #include <M5GFX.h>
@@ -55,6 +56,7 @@ private:
 
     M5Canvas*  _canvas = nullptr;
     WiFiHunter _hunter;
+    WifiGuard  _guard;
     Stats      _stats;
 
     // ── Scrollback ring ──────────────────────────────────────────
@@ -84,6 +86,9 @@ private:
     uint32_t _lastDeauthTargetCount = 0;
     uint32_t _lastEapolEventCount        = 0;
     uint32_t _lastExternalDeauthCount    = 0;
+    uint32_t _lastGuardDeauthCount       = 0;
+    uint32_t _lastBeaconFloodCount       = 0;
+    uint32_t _lastEvilTwinCount          = 0;
     uint32_t _statusLogMs                = 0;
     uint8_t  _lastChannel           = 0;
     uint32_t _pauseUntilMs          = 0;

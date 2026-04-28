@@ -43,9 +43,7 @@ void WiFiHunter::init() {
 
     WiFi.mode(WIFI_MODE_APSTA);
 
-    esp_wifi_set_promiscuous_rx_cb(
-        [](void* buf, wifi_promiscuous_pkt_type_t t){ _instance->_promiscCb(buf, t); }
-    );
+    esp_wifi_set_promiscuous_rx_cb(_promiscCb);
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_channel(_channel, WIFI_SECOND_CHAN_NONE);
 
@@ -338,16 +336,14 @@ void WiFiHunter::_processBeacon(const RawFrame& f) {
         ssidJustLearned = true;
     }
 
-    // If a valid pcap is already on disk for this AP, skip everything else:
-    // no beacon storage, no file (re)open, no further EAPOL processing.
-    if (ap->ssid[0] != '\0' && _pcapIsComplete(*ap)) {
-        ap->validated = true;
+    // On first SSID discovery only: check SD once for an existing complete pcap.
+    // After this, ap->validated handles all future beacons via the early return above.
+    if ((wasNew || ssidJustLearned) && ap->ssid[0] != '\0' && _pcapIsComplete(*ap)) {
+        ap->validated   = true;
         ap->pcapCreated = true;
         _pendingEapolCount[idx] = 0;
         memset(_pendingEapolLen[idx], 0, sizeof(_pendingEapolLen[idx]));
-        if (wasNew || ssidJustLearned) {
-            Serial.printf("[AP] Skip \"%s\" — pcap already complete\n", ap->ssid);
-        }
+        Serial.printf("[AP] Skip \"%s\" — pcap already complete\n", ap->ssid);
         return;
     }
 
@@ -598,7 +594,6 @@ void WiFiHunter::_hopChannel() {
 // ── Build attack queue — unvalidated APs on current channel ──
 
 void WiFiHunter::_buildAttackQueue() {
-    if (_guardMode) return;
     _attackQueueLen = 0;
     for (int i = 0; i < _apCount; i++) {
         const ApInfo& ap = _aps[i];

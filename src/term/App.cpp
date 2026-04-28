@@ -99,29 +99,32 @@ void App::startCrack(const char* pcapPath, const char* dictPath) {
     _pendingCrack = true;
 }
 void App::startNethunt() {
-    _nethuntRunning = true;
-    _hunter.setGuardMode(false);
+    _guard.pause();
     _hunter.resume();
+    _nethuntRunning = true;
     _qPushOut("service nethunt start");
     menuClose();
 }
 void App::_stopNethunt() {
-    _nethuntRunning = false;
     _hunter.pause();
+    _nethuntRunning = false;
+    _exhaustPhase   = 0;
     _qPushOut("service nethunt stop");
     menuClose();
 }
 void App::startNetguard() {
+    _hunter.pause();
+    _guard.init();
     _netguardRunning = true;
-    _hunter.setGuardMode(true);
-    _hunter.resume();
+    _lastGuardDeauthCount = 0;
+    _lastBeaconFloodCount = 0;
+    _lastEvilTwinCount    = 0;
     _qPushOut("service netguard start");
     menuClose();
 }
 void App::_stopNetguard() {
+    _guard.pause();
     _netguardRunning = false;
-    _hunter.setGuardMode(false);
-    _hunter.pause();
     _qPushOut("service netguard stop");
     menuClose();
 }
@@ -310,9 +313,10 @@ void App::_updateHunting(uint32_t ms) {
     if (_crackState != CrackState::Idle) return;
     if (ms - _statusLogMs >= 10000) {
         _statusLogMs = ms;
-        Serial.printf("[STATUS] phase=%d ch=%d bat=%d%% caps=%lu xp=%lu\n",
-                      (int)_hunter.phase(),
-                      _hunter.channel(),
+        uint8_t ch = _nethuntRunning ? _hunter.channel() : _guard.channel();
+        Serial.printf("[STATUS] mode=%s ch=%d bat=%d%% caps=%lu xp=%lu\n",
+                      _nethuntRunning ? "hunt" : "guard",
+                      ch,
                       M5.Power.getBatteryLevel(),
                       (unsigned long)_stats.captures(),
                       (unsigned long)_stats.xp());
@@ -320,7 +324,7 @@ void App::_updateHunting(uint32_t ms) {
 
     if (_menuState != MenuState::Closed) return;
 
-    // ── Exhaust sequence state machine (nethunt only) ─────────────
+    // ── Nethunt path ──────────────────────────────────────────────
     if (_nethuntRunning) {
         if (_exhaustPhase == 1) {
             if (ms < _pauseUntilMs) return;
@@ -334,67 +338,56 @@ void App::_updateHunting(uint32_t ms) {
             _qPushCmd("setchannel 1");
             _exhaustPhase = 0;
         }
-    }
 
-    _hunter.update(ms);
+        _hunter.update(ms);
 
-    // Channel hop — fires once per hop; wrapping 13→1 triggers exhaust sequence
-    uint8_t ch = _hunter.channel();
-    if (ch != _lastChannel) {
-        if (_lastChannel == 13 && ch == 1) {
-            _hunter.clearFindings(ms);
-            _lastApFoundCount      = 0;
-            _lastDeauthTargetCount = 0;
-            _lastEapolEventCount   = 0;
-            _lastCaptureCount      = 0;
+        uint8_t ch = _hunter.channel();
+        if (ch != _lastChannel) {
+            if (_lastChannel == 13 && ch == 1) {
+                _hunter.clearFindings(ms);
+                _lastApFoundCount      = 0;
+                _lastDeauthTargetCount = 0;
+                _lastEapolEventCount   = 0;
+                _lastCaptureCount      = 0;
+                _lastChannel = ch;
+                _qPushCmd("service nethunt exhaust 60");
+                _pauseUntilMs = ms + 60000;
+                _exhaustPhase = 1;
+                return;
+            }
             _lastChannel = ch;
-            _qPushCmd("service nethunt exhaust 60");
-            _pauseUntilMs = ms + 60000;
-            _exhaustPhase = 1;
-            return;                          // setchannel 1 deferred to phase 2 end
+            _qPushCmd("setchannel %d", ch);
         }
-        _lastChannel = ch;
-        _qPushCmd("setchannel %d", ch);
-    }
 
-    // New AP found — passive receive
-    // LOG_BODY=50: "detected " (9) + SSID up to 32 = 41 chars ≤ 50
-    uint32_t afc = _hunter.apFoundCount();
-    if (afc > _lastApFoundCount) {
-        _lastApFoundCount = afc;
-        const char* ssid = _hunter.lastFoundSsid();
-        _qPushOut("detected %.32s", (ssid && ssid[0]) ? ssid : "<hidden>");
-    }
+        uint32_t afc = _hunter.apFoundCount();
+        if (afc > _lastApFoundCount) {
+            _lastApFoundCount = afc;
+            const char* ssid = _hunter.lastFoundSsid();
+            _qPushOut("detected %.32s", (ssid && ssid[0]) ? ssid : "<hidden>");
+        }
 
-    if (_nethuntRunning) {
-        // Deauth sent — first attempt per AP target only
         uint32_t dtc = _hunter.deauthTargetCount();
         if (dtc > _lastDeauthTargetCount) {
             _lastDeauthTargetCount = dtc;
             const char* dsid = _hunter.lastDeauthSsid();
             _qPushCmd("deauth %.32s", (dsid && dsid[0]) ? dsid : "??");
         }
-    }
 
-    // EAPOL frame received (both modes)
-    uint32_t eec = _hunter.eapolEventCount();
-    if (eec > _lastEapolEventCount) {
-        _lastEapolEventCount = eec;
-        int msg = _hunter.lastEapolMsg();
-        const char* esid = _hunter.lastEapolSsid();
-        _qPushOut("traced eapol M%d %.32s", msg, (esid && esid[0]) ? esid : "??");
-    }
+        uint32_t eec = _hunter.eapolEventCount();
+        if (eec > _lastEapolEventCount) {
+            _lastEapolEventCount = eec;
+            int msg = _hunter.lastEapolMsg();
+            const char* esid = _hunter.lastEapolSsid();
+            _qPushOut("traced eapol M%d %.32s", msg, (esid && esid[0]) ? esid : "??");
+        }
 
-    // External deauth detected — another attacker on channel (both modes)
-    uint32_t edc = _hunter.externalDeauthCount();
-    if (edc > _lastExternalDeauthCount) {
-        _lastExternalDeauthCount = edc;
-        const char* eid = _hunter.lastExternalDeauthSsid();
-        _qPushOut("alert deauth %.32s", (eid && eid[0]) ? eid : "??");
-    }
+        uint32_t edc = _hunter.externalDeauthCount();
+        if (edc > _lastExternalDeauthCount) {
+            _lastExternalDeauthCount = edc;
+            const char* eid = _hunter.lastExternalDeauthSsid();
+            _qPushOut("alert deauth %.32s", (eid && eid[0]) ? eid : "??");
+        }
 
-    if (_nethuntRunning) {
-        // Handshake complete — dump command with real file size as end address
         uint32_t caps = _hunter.captureCount();
         if (caps > _lastCaptureCount) {
             _lastCaptureCount = caps;
@@ -403,12 +396,38 @@ void App::_updateHunting(uint32_t ms) {
             fname = fname ? fname + 1 : path;
             _stats.onCapture();
             _stats.save();
-            File pcap = SD.open(path, FILE_READ);
-            uint32_t fsize = pcap ? (uint32_t)pcap.size() : 512;
-            if (pcap) pcap.close();
             uint16_t r1 = 0x1000 + (uint16_t)(rand() & 0xCFFF);
-            uint16_t r2 = r1 + (uint16_t)(fsize & 0xFFFF);
+            uint16_t r2 = r1 + (uint16_t)(rand() & 0x0FFF) + 0x100;
             _qPushCmd("dump 0x%04x..0x%04x >> %.27s", r1, r2, fname);
+        }
+        return;
+    }
+
+    // ── Netguard path ─────────────────────────────────────────────
+    _guard.update(ms);
+
+    uint32_t dc = _guard.deauthCount();
+    if (dc > _lastGuardDeauthCount) {
+        _lastGuardDeauthCount = dc;
+        const char* sid = _guard.lastDeauthSsid();
+        _qPushOut("alert deauth %.32s", (sid && sid[0]) ? sid : "??");
+    }
+
+    uint32_t fc = _guard.beaconFloodCount();
+    if (fc != _lastBeaconFloodCount) {
+        _lastBeaconFloodCount = fc;
+        if (fc > 0) {
+            const char* sid = _guard.lastFloodSsid();
+            _qPushOut("alert flood %.32s", (sid && sid[0]) ? sid : "??");
+        }
+    }
+
+    uint32_t tc = _guard.evilTwinCount();
+    if (tc != _lastEvilTwinCount) {
+        _lastEvilTwinCount = tc;
+        if (tc > 0) {
+            const char* sid = _guard.lastEvilTwinSsid();
+            _qPushOut("alert twin %.32s", (sid && sid[0]) ? sid : "??");
         }
     }
 }
@@ -681,6 +700,7 @@ void App::_crackProdTask(void* param) {
         char line[64], line2[64];
         File f = SD.open(ctx->wordlistPath, FILE_READ);
         if (f) {
+            ctx->fileSize = (uint32_t)f.size();
             while (f.available() && !ctx->stop && !ctx->found) {
                 size_t n = f.readBytesUntil('\n', line, 63);
                 line[n] = '\0';
@@ -737,11 +757,8 @@ void App::_startCrack() {
 
     if (strcmp(_crackCtx.wordlistPath, "builtin") == 0) {
         _crackCtx.fileSize = (uint32_t)kCrackPasswordCount;
-    } else {
-        File wf = SD.open(_crackCtx.wordlistPath, FILE_READ);
-        _crackCtx.fileSize = wf ? (uint32_t)wf.size() : 1;
-        if (wf) wf.close();
     }
+    // SD wordlist: fileSize set by producer task when it opens the file
 
     _crackCtx.queue   = xQueueCreate(CRACK_QUEUE_DEPTH, sizeof(CrackPwEntry));
     _crackCtx.doneSem = xSemaphoreCreateBinary();
@@ -973,8 +990,8 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
     c.drawFastHLine(0, HEADER_DIVIDER_Y, SCR_W, Theme::DIM);
 
     Virus::State vs;
-    if      (_exhaustPhase != 0)                    vs = Virus::State::Sleep;
-    else if (_crackState != CrackState::Idle)       vs = Virus::State::Decrypting;
+    if      (_crackState != CrackState::Idle)       vs = Virus::State::Decrypting;
+    else if (_nethuntRunning && _exhaustPhase != 0) vs = Virus::State::Sleep;
     else if (_nethuntRunning)                       vs = Virus::State::Active;
     else if (_netguardRunning)                      vs = Virus::State::Guard;
     else                                            vs = Virus::State::Idle;

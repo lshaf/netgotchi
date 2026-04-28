@@ -19,15 +19,14 @@ public:
         uint8_t  staMacM2[6];
         bool     hasAnonce;
         bool     hasM2;
-        uint32_t deauthDetectedMs;  // last time we logged an incoming deauth for this AP
+        uint32_t deauthDetectedMs;
     };
 
     void init();
     void update(uint32_t ms);
     void clearFindings(uint32_t ms);
-    void setGuardMode(bool g) { _guardMode = g; }
     void pause()  { esp_wifi_set_promiscuous(false); }
-    void resume() { esp_wifi_set_promiscuous(true);  }
+    void resume() { esp_wifi_set_promiscuous_rx_cb(_promiscCb); esp_wifi_set_promiscuous(true); }
 
     Phase    phase()             const { return _phase; }
     uint8_t  channel()           const { return _channel; }
@@ -38,16 +37,16 @@ public:
     uint32_t deauthTargetCount() const { return _deauthTargetCount; }
     uint32_t eapolEventCount()        const { return _eapolEventCount; }
     uint32_t externalDeauthCount()    const { return _externalDeauthCount; }
-    const char* lastFoundSsid()       const { return _lastFoundSsid; }
-    const char* lastDeauthSsid()      const { return _lastDeauthSsid; }
-    int         lastEapolMsg()        const { return _lastEapolMsg; }
-    const char* lastEapolSsid()       const { return _lastEapolSsid; }
-    const char* lastCapturePath()     const { return _lastCapturePath; }
+    const char* lastFoundSsid()          const { return _lastFoundSsid; }
+    const char* lastDeauthSsid()         const { return _lastDeauthSsid; }
+    int         lastEapolMsg()           const { return _lastEapolMsg; }
+    const char* lastEapolSsid()          const { return _lastEapolSsid; }
+    const char* lastCapturePath()        const { return _lastCapturePath; }
     const char* lastExternalDeauthSsid() const { return _lastExternalDeauthSsid; }
 
 private:
-    static constexpr int MAX_FRAME       = 400;
-    static constexpr int RING_SIZE       = 32;
+    static constexpr int MAX_FRAME          = 400;
+    static constexpr int RING_SIZE          = 32;
     static constexpr int MAX_PENDING_PER_AP = 4;
 
     struct RawFrame {
@@ -94,12 +93,11 @@ private:
     static constexpr int      DEAUTH_BURSTS       = 10;
 
     // ── State ─────────────────────────────────────────────────
-    Phase    _phase   = Phase::Dwell;
-    uint8_t  _channel = 1;
+    Phase    _phase      = Phase::Dwell;
+    uint8_t  _channel    = 1;
     uint32_t _dwellStartMs = 0;
     uint32_t _deauthLastMs = 0;
     uint16_t _deauthSeq    = 0;
-    bool     _guardMode = false;
 
     // ── Attack queue ──────────────────────────────────────────
     uint8_t  _attackQueue[MAX_APS] = {};
@@ -113,8 +111,6 @@ private:
     uint8_t  _beaconData[MAX_APS][MAX_FRAME]{};
     uint16_t _beaconLen[MAX_APS]{};
 
-    // Per-AP buffer of EAPOL frames seen before SSID/beacon known.
-    // Flushed to PCAP after first beacon writes the file header.
     uint8_t  _pendingEapol   [MAX_APS][MAX_PENDING_PER_AP][MAX_FRAME]{};
     uint16_t _pendingEapolLen[MAX_APS][MAX_PENDING_PER_AP]{};
     uint8_t  _pendingEapolCount[MAX_APS]{};

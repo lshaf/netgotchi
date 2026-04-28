@@ -18,7 +18,8 @@ private:
     enum State : uint8_t { kPcap, kDict };
     static constexpr int MAX_FILES = 10;
 
-    State _state = kPcap;
+    State _state      = kPcap;
+    bool  _pcapLoaded = false;
     char  _selPcap[64] = {};
 
     char  _filePaths[MAX_FILES][64] = {};

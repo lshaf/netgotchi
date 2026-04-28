@@ -4,7 +4,10 @@
 #include <cstdio>
 
 void CrackCommand::execute(IMenuHost& host) {
-    _loadPcapList();
+    if (!_pcapLoaded) {
+        _loadPcapList();
+        _pcapLoaded = true;
+    }
     _state = kPcap;
     host.openSubMenu(this);
 }
@@ -56,7 +59,7 @@ void CrackCommand::onSubSelect(IMenuHost& host, int idx) {
         dictPath = "builtin";
         dictName = "builtin";
     } else {
-        _loadPcapList();
+        _pcapLoaded = false;  // invalidate so next execute() rescans
         _state = kPcap;
         return;
     }
