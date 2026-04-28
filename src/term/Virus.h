@@ -4,7 +4,9 @@
 
 class Virus {
 public:
-    static void draw(M5Canvas& c, uint32_t ms, bool sleeping);
+    enum class State : uint8_t { Idle, Active, Decrypting, Sleep };
+
+    static void draw(M5Canvas& c, uint32_t ms, State state);
 
     static constexpr int BAR_H = 15;
     static constexpr int BAR_GAP = 2;

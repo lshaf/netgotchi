@@ -36,6 +36,7 @@ public:
     void setPendingBrightness(uint8_t val255) override;
     void setPendingPowerOff() override;
     void     startCrack(const char* pcapPath, const char* dictPath) override;
+    void     startNetgotchi() override;
     uint32_t statsXp()         const override;
     uint32_t statsCaptures()   const override;
     uint32_t statsLevel()      const override;
@@ -129,6 +130,12 @@ private:
     TaskHandle_t _crackProdHandle = nullptr;
     char         _crackPcapPath[64] = {};
     bool         _pendingCrack    = false;
+    uint32_t     _crackStartMs    = 0;
+
+    // ── Netgotchi (hunter) state ──────────────────────────────────
+    bool         _netgotchiRunning = false;
+    void         _stopNetgotchi();
+    void         _stopCrack();
 
     void _startCrack    ();
     void _updateCracking(uint32_t ms);

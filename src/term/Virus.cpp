@@ -1,14 +1,14 @@
 #include "Virus.h"
 #include "Theme.h"
 
-void Virus::draw(M5Canvas& c, uint32_t ms, bool sleeping) {
+void Virus::draw(M5Canvas& c, uint32_t ms, State state) {
     c.fillRect(X0, Y0, SIDE, SIDE, Theme::BG);
 
     const int cx = X0 + SIDE / 2;
     const int cy = Y0 + SIDE / 2;
 
-    if (sleeping) {
-        // ── Sleeping ──────────────────────────────────────────
+    // ── Sleep ─────────────────────────────────────────────────────
+    if (state == State::Sleep) {
         for (int i = 1; i <= 2; i++) {
             c.drawPixel(cx,         cy - R - i, Theme::DIM);
             c.drawPixel(cx,         cy + R + i, Theme::DIM);
@@ -26,15 +26,13 @@ void Virus::draw(M5Canvas& c, uint32_t ms, bool sleeping) {
         // Relaxed brows
         c.drawFastHLine(cx - 5, cy - 5, 3, Theme::FG);
         c.drawFastHLine(cx + 2, cy - 5, 3, Theme::FG);
-
-        // Closed eyes (always)
+        // Closed eyes
         c.drawFastHLine(cx - 4, cy - 3, 3, Theme::FG);
         c.drawFastHLine(cx + 1, cy - 3, 2, Theme::FG);
-
         // Flat mouth
         c.drawFastHLine(cx - 2, cy + 3, 5, Theme::DIM);
 
-        // Zzz — two stacked pixel-art z's, offset diagonally
+        // Zzz
         const int zx = cx + 7, zy = cy - R - 6;
         c.drawFastHLine(zx,     zy,     3, Theme::FG);
         c.drawPixel    (zx + 1, zy + 1, Theme::FG);
@@ -45,61 +43,109 @@ void Virus::draw(M5Canvas& c, uint32_t ms, bool sleeping) {
         return;
     }
 
-    // ── Alive ─────────────────────────────────────────────────
-    const bool tick  = (ms / 400) & 1;    // spike pulse 400 ms each state
-    const bool blink = (ms % 3000) < 100; // blink 100 ms every 3 s
+    // ── Idle ──────────────────────────────────────────────────────
+    if (state == State::Idle) {
+        c.fillCircle(cx, cy, R, Theme::BG);
+        c.drawCircle(cx, cy, R, Theme::DIM);
 
-    const int sLen = tick ? 4 : 2;        // cardinal spike shaft length
-    const int dLen = tick ? 3 : 1;        // diagonal spike shaft length
+        // Flat neutral brows
+        c.drawFastHLine(cx - 5, cy - 5, 4, Theme::DIM);
+        c.drawFastHLine(cx + 1, cy - 5, 4, Theme::DIM);
 
-    // ── Cardinal spikes + round bulb tips ────────────────────────
-    for (int i = 1; i <= sLen; i++) {
-        c.drawPixel(cx,         cy - R - i, Theme::FG);
-        c.drawPixel(cx,         cy + R + i, Theme::FG);
-        c.drawPixel(cx - R - i, cy,         Theme::FG);
-        c.drawPixel(cx + R + i, cy,         Theme::FG);
+        // Half-lidded bored eyes — slow blink every 4 s
+        bool blink = (ms % 4000) < 100;
+        if (!blink) {
+            c.fillRect(cx - 4, cy - 3, 3, 1, Theme::DIM);
+            c.fillRect(cx + 1, cy - 3, 2, 1, Theme::DIM);
+        }
+
+        // Flat bored mouth with slight left droop
+        c.drawFastHLine(cx - 2, cy + 3, 5, Theme::DIM);
+        c.drawPixel(cx - 3, cy + 4, Theme::DIM);
+        return;
     }
-    c.fillRect(cx - 1,            cy - R - sLen - 1, 3, 2, Theme::FG); // top bulb
-    c.fillRect(cx - 1,            cy + R + sLen,     3, 2, Theme::FG); // bottom bulb
-    c.fillRect(cx - R - sLen - 1, cy - 1,            2, 3, Theme::FG); // left bulb
-    c.fillRect(cx + R + sLen - 1, cy - 1,            2, 3, Theme::FG); // right bulb
 
-    // ── Diagonal spikes + dot tips ────────────────────────────────
-    for (int i = 0; i < dLen; i++) {
-        c.drawPixel(cx - 8 - i, cy - 8 - i, Theme::FG);
-        c.drawPixel(cx + 8 + i, cy - 8 - i, Theme::FG);
-        c.drawPixel(cx - 8 - i, cy + 8 + i, Theme::FG);
-        c.drawPixel(cx + 8 + i, cy + 8 + i, Theme::FG);
+    // ── Active ────────────────────────────────────────────────────
+    if (state == State::Active) {
+        const bool tick  = (ms / 400) & 1;
+        const bool blink = (ms % 3000) < 100;
+        const int sLen = tick ? 4 : 2;
+        const int dLen = tick ? 3 : 1;
+
+        for (int i = 1; i <= sLen; i++) {
+            c.drawPixel(cx,         cy - R - i, Theme::FG);
+            c.drawPixel(cx,         cy + R + i, Theme::FG);
+            c.drawPixel(cx - R - i, cy,         Theme::FG);
+            c.drawPixel(cx + R + i, cy,         Theme::FG);
+        }
+        c.fillRect(cx - 1,            cy - R - sLen - 1, 3, 2, Theme::FG);
+        c.fillRect(cx - 1,            cy + R + sLen,     3, 2, Theme::FG);
+        c.fillRect(cx - R - sLen - 1, cy - 1,            2, 3, Theme::FG);
+        c.fillRect(cx + R + sLen - 1, cy - 1,            2, 3, Theme::FG);
+
+        for (int i = 0; i < dLen; i++) {
+            c.drawPixel(cx - 8 - i, cy - 8 - i, Theme::FG);
+            c.drawPixel(cx + 8 + i, cy - 8 - i, Theme::FG);
+            c.drawPixel(cx - 8 - i, cy + 8 + i, Theme::FG);
+            c.drawPixel(cx + 8 + i, cy + 8 + i, Theme::FG);
+        }
+        const int dt = 8 + dLen;
+        c.fillRect(cx - dt - 1, cy - dt - 1, 2, 2, Theme::FG);
+        c.fillRect(cx + dt - 1, cy - dt - 1, 2, 2, Theme::FG);
+        c.fillRect(cx - dt - 1, cy + dt - 1, 2, 2, Theme::FG);
+        c.fillRect(cx + dt - 1, cy + dt - 1, 2, 2, Theme::FG);
+
+        c.fillCircle(cx, cy, R, Theme::BG);
+        c.drawCircle(cx, cy, R, Theme::FG);
+
+        // Angry brows
+        c.drawPixel(cx - 5, cy - 5, Theme::FG);
+        c.drawPixel(cx - 4, cy - 5, Theme::FG);
+        c.drawPixel(cx - 3, cy - 4, Theme::FG);
+        c.drawPixel(cx + 2, cy - 4, Theme::FG);
+        c.drawPixel(cx + 3, cy - 5, Theme::FG);
+        c.drawPixel(cx + 4, cy - 5, Theme::FG);
+
+        if (!blink) {
+            c.fillRect(cx - 4, cy - 3, 3, 2, Theme::FG);
+            c.fillRect(cx + 1, cy - 3, 2, 2, Theme::FG);
+        } else {
+            c.drawFastHLine(cx - 4, cy - 3, 3, Theme::FG);
+            c.drawFastHLine(cx + 1, cy - 3, 2, Theme::FG);
+        }
+
+        // Chomping mouth
+        c.drawFastHLine(cx - 3, cy + 3, 7, Theme::FG);
+        for (int x = cx - 2; x <= cx + 2; x += 2)
+            c.drawPixel(x, cy + 4, Theme::FG);
+        return;
     }
-    const int dt = 8 + dLen;
-    c.fillRect(cx - dt - 1, cy - dt - 1, 2, 2, Theme::FG);
-    c.fillRect(cx + dt - 1, cy - dt - 1, 2, 2, Theme::FG);
-    c.fillRect(cx - dt - 1, cy + dt - 1, 2, 2, Theme::FG);
-    c.fillRect(cx + dt - 1, cy + dt - 1, 2, 2, Theme::FG);
 
-    // ── Body ──────────────────────────────────────────────────────
-    c.fillCircle(cx, cy, R, Theme::BG);
-    c.drawCircle(cx, cy, R, Theme::FG);
+    // ── Decrypting ────────────────────────────────────────────────
+    {
+        // Rotating comet: 8 cardinal+diagonal orbit positions
+        // order is clockwise starting from right
+        static const int8_t sx[8] = { 13,  9,  0, -9, -13, -9,  0,  9 };
+        static const int8_t sy[8] = {  0,  9, 13,  9,   0, -9, -13, -9 };
+        const int step = (int)(ms / 100) % 8;
+        c.drawPixel(cx + sx[(step + 6) % 8], cy + sy[(step + 6) % 8], Theme::DIM);
+        c.drawPixel(cx + sx[(step + 7) % 8], cy + sy[(step + 7) % 8], Theme::PALE);
+        c.drawPixel(cx + sx[step],           cy + sy[step],           Theme::FG);
 
-    // ── Angry brows ───────────────────────────────────────────────
-    c.drawPixel(cx - 5, cy - 5, Theme::FG);
-    c.drawPixel(cx - 4, cy - 5, Theme::FG);
-    c.drawPixel(cx - 3, cy - 4, Theme::FG);
-    c.drawPixel(cx + 2, cy - 4, Theme::FG);
-    c.drawPixel(cx + 3, cy - 5, Theme::FG);
-    c.drawPixel(cx + 4, cy - 5, Theme::FG);
+        c.fillCircle(cx, cy, R, Theme::BG);
+        c.drawCircle(cx, cy, R, Theme::FG);
 
-    // ── Eyes: open = 3×2 left + 2×2 right, closed = flat lines ──
-    if (!blink) {
-        c.fillRect(cx - 4, cy - 3, 3, 2, Theme::FG);
-        c.fillRect(cx + 1, cy - 3, 2, 2, Theme::FG);
-    } else {
+        // Concentrated brows (angled inward, close together)
+        c.drawPixel(cx - 4, cy - 5, Theme::FG);
+        c.drawPixel(cx - 3, cy - 4, Theme::FG);
+        c.drawPixel(cx + 2, cy - 4, Theme::FG);
+        c.drawPixel(cx + 3, cy - 5, Theme::FG);
+
+        // Squinting eyes (1 px tall, no blink — too focused)
         c.drawFastHLine(cx - 4, cy - 3, 3, Theme::FG);
         c.drawFastHLine(cx + 1, cy - 3, 2, Theme::FG);
-    }
 
-    // ── Mouth: top lip + teeth gaps ───────────────────────────────
-    c.drawFastHLine(cx - 3, cy + 3, 7, Theme::FG);
-    for (int x = cx - 2; x <= cx + 2; x += 2)
-        c.drawPixel(x, cy + 4, Theme::FG);
+        // Tight determined mouth
+        c.drawFastHLine(cx - 2, cy + 3, 5, Theme::FG);
+    }
 }

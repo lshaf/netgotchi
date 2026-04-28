@@ -12,6 +12,7 @@
 #include "command/BrightnessCommand.h"
 #include "command/PowerOffCommand.h"
 #include "command/CrackCommand.h"
+#include "command/NetgotchiCommand.h"
 #include "../core/FastWpaCrack.h"
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -24,13 +25,14 @@
     static constexpr int SD_CS = 4;
 #endif
 
+static NetgotchiCommand  s_netgotchi;
 static ProfileCommand    s_profile;
 static CrackCommand      s_crack;
 static ThemeCommand      s_theme;
 static BrightnessCommand s_brightness;
 static PowerOffCommand   s_poweroff;
 static MenuCommand*      s_rootItems[] = {
-    &s_profile, &s_crack, &s_theme, &s_brightness, &s_poweroff
+    &s_netgotchi, &s_profile, &s_crack, &s_theme, &s_brightness, &s_poweroff
 };
 static constexpr int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
@@ -94,6 +96,22 @@ void App::startCrack(const char* pcapPath, const char* dictPath) {
     strncpy(_crackCtx.wordlistPath, dictPath, sizeof(_crackCtx.wordlistPath) - 1);
     _pendingCrack = true;
 }
+void App::startNetgotchi() {
+    _netgotchiRunning = true;
+    _hunter.resume();
+    _qPushOut("service netgotchi start");
+    menuClose();
+}
+void App::_stopNetgotchi() {
+    _netgotchiRunning = false;
+    _hunter.pause();
+    _qPushOut("service netgotchi stop");
+    menuClose();
+}
+void App::_stopCrack() {
+    _crackCtx.stop = true;
+    menuClose();
+}
 uint32_t App::statsXp()         const { return _stats.xp(); }
 uint32_t App::statsCaptures()   const { return _stats.captures(); }
 uint32_t App::statsLevel()      const { return _stats.level(); }
@@ -133,6 +151,7 @@ void App::init() {
     _stats.load();
     Theme::load();
     _hunter.init();
+    _hunter.pause();   // starts paused; user must tap netgotchi in menu to run
 
     uint32_t ms = millis();
     _cursorMs   = ms;
@@ -143,8 +162,7 @@ void App::init() {
     _qPushOut("psram %ukb free", (unsigned)(ESP.getFreePsram() / 1024));
     if (sdOk) _qPushOut("sd ok %llumb", SD.totalBytes() / (1024 * 1024));
     else      _qPushOut("sd: mount failed");
-    _qPushOut("wifi promisc up");
-    _qPushCmd("service netgotchi start");
+    _qPushOut("wifi ready.");
     _qPushOut("ready.");
 
     Serial.println("[INIT] Term boot complete");
@@ -271,6 +289,7 @@ void App::_updateTyping(uint32_t ms) {
 // ── Hunting integration ───────────────────────────────────────
 
 void App::_updateHunting(uint32_t ms) {
+    if (!_netgotchiRunning) return;
     if (_crackState != CrackState::Idle) return;
     if (ms - _statusLogMs >= 10000) {
         _statusLogMs = ms;
@@ -678,9 +697,7 @@ void App::_startCrack() {
         return;
     }
 
-    _qPushOut("service stop");
     _qPushOut("target: %.32s", hs.ssid);
-    _hunter.pause();
 
     // Preserve wordlistPath — it was set before _startCrack() was called
     char wlPath[64];
@@ -707,7 +724,8 @@ void App::_startCrack() {
     xTaskCreatePinnedToCore(_crackProdTask,   "wpa2_p", 8192, &_crackCtx, 1,
                             &_crackProdHandle, 1);
 
-    _crackState = CrackState::Running;
+    _crackStartMs = millis();
+    _crackState   = CrackState::Running;
 }
 
 void App::_updateCracking(uint32_t ms) {
@@ -721,7 +739,6 @@ void App::_updateCracking(uint32_t ms) {
     if (_crackCtx.doneSem) { vSemaphoreDelete(_crackCtx.doneSem); _crackCtx.doneSem = nullptr; }
 
     if (_crackCtx.found) {
-        // Save cracked password
         char savePath[80];
         char bssid[13];
         snprintf(bssid, sizeof(bssid), "%02X%02X%02X%02X%02X%02X",
@@ -732,15 +749,13 @@ void App::_updateCracking(uint32_t ms) {
                  bssid, _crackCtx.hs.ssid);
         File pf = SD.open(savePath, FILE_WRITE);
         if (pf) { pf.print(_crackCtx.foundPass); pf.close(); }
-
         _qPushOut("ssid: %.32s", _crackCtx.hs.ssid);
         _qPushOut("pass: %.32s", _crackCtx.foundPass);
+    } else if (_crackCtx.stop) {
+        _qPushOut("interrupted");
+    } else {
+        _qPushOut("not found");
     }
-
-    _qPushOut("finish");
-    _qPushCmd("service netgotchi start");
-
-    _hunter.resume();
     _crackState = CrackState::Idle;
 }
 
@@ -770,7 +785,7 @@ void App::_handleTouch(uint32_t ms) {
 
     int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
-        nItems = ROOT_N;
+        nItems = (_netgotchiRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
@@ -842,6 +857,8 @@ void App::_handleTouch(uint32_t ms) {
     }
 
     if (_menuState == MenuState::Root) {
+        if (_netgotchiRunning)                     { _stopNetgotchi(); return; }
+        if (_crackState == CrackState::Running)    { _stopCrack();     return; }
         s_rootItems[itemIdx]->execute(*this);
         return;
     }
@@ -927,7 +944,12 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
     // ── Header bottom divider ────────────────────────────────
     c.drawFastHLine(0, HEADER_DIVIDER_Y, SCR_W, Theme::DIM);
 
-    Virus::draw(c, ms, _exhaustPhase != 0);
+    Virus::State vs;
+    if      (_exhaustPhase != 0)                    vs = Virus::State::Sleep;
+    else if (_crackState != CrackState::Idle)       vs = Virus::State::Decrypting;
+    else if (_netgotchiRunning)                     vs = Virus::State::Active;
+    else                                            vs = Virus::State::Idle;
+    Virus::draw(c, ms, vs);
 }
 
 // ── Scrollback ────────────────────────────────────────────────
@@ -954,8 +976,25 @@ void App::_drawLog(M5Canvas& c) const {
         char bar[21]; int filled = (int)(20 * pct / 100);
         for (int i = 0; i < 20; i++) bar[i] = (i < filled) ? '#' : ' ';
         bar[20] = '\0';
-        char buf[40];
-        snprintf(buf, sizeof(buf), "[%s] %lu%%", bar, (unsigned long)pct);
+
+        char speedBuf[10] = "";
+        char etaBuf[10]   = "";
+        uint32_t elapsed_s = (millis() - _crackStartMs + 500) / 1000;
+        if (elapsed_s > 0) {
+            uint32_t wps = _crackCtx.tested / elapsed_s;
+            if (wps >= 1000) snprintf(speedBuf, sizeof(speedBuf), " %luk/s", (unsigned long)(wps / 1000));
+            else             snprintf(speedBuf, sizeof(speedBuf), " %lu/s",  (unsigned long)wps);
+
+            uint32_t bps = (_crackCtx.bytesDone > 0) ? _crackCtx.bytesDone / elapsed_s : 0;
+            if (bps > 0 && _crackCtx.fileSize > _crackCtx.bytesDone) {
+                uint32_t eta = (_crackCtx.fileSize - _crackCtx.bytesDone) / bps;
+                if (eta < 60)   snprintf(etaBuf, sizeof(etaBuf), " %lus",       (unsigned long)eta);
+                else            snprintf(etaBuf, sizeof(etaBuf), " %lum%02lus",  (unsigned long)(eta / 60), (unsigned long)(eta % 60));
+            }
+        }
+
+        char buf[LINE_COL];
+        snprintf(buf, sizeof(buf), "[%s] %lu%%%s%s", bar, (unsigned long)pct, speedBuf, etaBuf);
         int y = LOG_BOT - LINE_H + 1;
         c.drawString(buf, MARGIN, y);
         scrollSlot = 1;  // shift normal log lines up by one slot
@@ -1010,7 +1049,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
 
     int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
-        nItems = ROOT_N;
+        nItems = (_netgotchiRunning || _crackState == CrackState::Running) ? 1 : ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
@@ -1069,7 +1108,9 @@ void App::_drawMenuContent(M5Canvas& c) const {
         if (itemIdx < 0 || itemIdx >= nItems) continue;
 
         if (_menuState == MenuState::Root) {
-            drawItem(slot, s_rootItems[itemIdx]->label(), true);
+            const bool locked = _netgotchiRunning || (_crackState == CrackState::Running);
+            const char* lbl = locked ? "stop" : s_rootItems[itemIdx]->label();
+            drawItem(slot, lbl, true);
         } else if (_menuState == MenuState::Sub && _activeSubCmd) {
             bool act = _activeSubCmd->subIsActive(itemIdx);
             drawItem(slot, _activeSubCmd->subLabel(itemIdx), act);
