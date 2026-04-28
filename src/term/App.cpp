@@ -83,16 +83,16 @@ namespace {
 
 void App::cmdPush(const char* text)   { _qPushCmd("%s", text); }
 void App::outPush(const char* text)   { _qPushOut("%s", text); }
-void App::menuClose() { _menuState = MenuState::Closed; _activeSubCmd = nullptr; }
-void App::menuBack()  { _menuState = MenuState::Root;   _activeSubCmd = nullptr; }
-void App::openSubMenu(MenuCommand* cmd) { _activeSubCmd = cmd; _menuState = MenuState::Sub; }
+void App::menuClose() { _menuState = MenuState::Closed; _activeSubCmd = nullptr; _menuScroll = 0; _menuLastSubCount = -1; }
+void App::menuBack()  { _menuState = MenuState::Root;   _activeSubCmd = nullptr; _menuScroll = 0; _menuLastSubCount = -1; }
+void App::openSubMenu(MenuCommand* cmd) { _activeSubCmd = cmd; _menuState = MenuState::Sub; _menuScroll = 0; _menuLastSubCount = -1; }
 void App::setPendingTheme(int8_t idx)     { _pendingTheme  = idx; }
 void App::setPendingBrightness(uint8_t v) { _pendingBright = (int)v; }
 void App::setPendingPowerOff()            { _pendingPowerOff = true; }
 void App::startCrack(const char* pcapPath, const char* dictPath) {
-    strncpy(_crackPcapPath,           pcapPath, sizeof(_crackPcapPath)           - 1);
-    strncpy(_crackCtx.wordlistPath,   dictPath, sizeof(_crackCtx.wordlistPath)   - 1);
-    _startCrack();
+    strncpy(_crackPcapPath,         pcapPath, sizeof(_crackPcapPath)         - 1);
+    strncpy(_crackCtx.wordlistPath, dictPath, sizeof(_crackCtx.wordlistPath) - 1);
+    _pendingCrack = true;
 }
 uint32_t App::statsXp()         const { return _stats.xp(); }
 uint32_t App::statsCaptures()   const { return _stats.captures(); }
@@ -768,25 +768,46 @@ void App::_handleTouch(uint32_t ms) {
         return;
     }
 
-    int nItems = 0, itemH = MENU_ITEM_H, menuTop = 0;
+    int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
         nItems = ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
     }
-    menuTop = INPUT_DIVIDER_Y - nItems * itemH;
+
+    // Reset scroll when the underlying list changes (e.g. CrackCommand pcap → dict).
+    if (_menuLastSubCount != nItems) {
+        _menuScroll       = 0;
+        _menuLastSubCount = nItems;
+    }
+
+    int maxVis = (INPUT_DIVIDER_Y - HEADER_DIVIDER_Y - 4) / itemH;
+    if (maxVis < 3)        maxVis = 3;
+    bool paginated         = nItems > maxVis;
+    int  slotCount         = paginated ? maxVis      : nItems;
+    int  itemsPerPage      = paginated ? maxVis - 2  : nItems;
+    int  firstItemSlot     = paginated ? 1           : 0;
+    int  lastItemSlot      = paginated ? maxVis - 2  : slotCount - 1;
+    if (paginated) {
+        int maxScroll = nItems - itemsPerPage;
+        if (_menuScroll < 0)         _menuScroll = 0;
+        if (_menuScroll > maxScroll) _menuScroll = maxScroll;
+    } else {
+        _menuScroll = 0;
+    }
+    int menuTop = INPUT_DIVIDER_Y - slotCount * itemH;
 
     bool inMenu = (tx >= MARGIN && tx < SCR_W - MARGIN &&
                    ty >= menuTop && ty < INPUT_DIVIDER_Y);
-    int hitItem = -1;
+    int hitSlot = -1;
     if (inMenu) {
-        hitItem = (ty - menuTop) / itemH;
-        if (hitItem >= nItems) hitItem = -1;
+        hitSlot = (ty - menuTop) / itemH;
+        if (hitSlot >= slotCount) hitSlot = -1;
     }
 
     if (pressed) {
-        _menuHighlight = (int8_t)hitItem;
+        _menuHighlight = (int8_t)hitSlot;
         return;
     }
 
@@ -800,13 +821,33 @@ void App::_handleTouch(uint32_t ms) {
         return;
     }
 
+    // Pagination controls — don't dispatch to the menu item.
+    if (paginated && sel == 0) {
+        _menuScroll -= itemsPerPage;
+        if (_menuScroll < 0) _menuScroll = 0;
+        return;
+    }
+    if (paginated && sel == slotCount - 1) {
+        _menuScroll += itemsPerPage;
+        int maxScroll = nItems - itemsPerPage;
+        if (_menuScroll > maxScroll) _menuScroll = maxScroll;
+        return;
+    }
+
+    int itemIdx = _menuScroll + (sel - firstItemSlot);
+    if (itemIdx < 0 || itemIdx >= nItems) {
+        (void)lastItemSlot;
+        menuClose();
+        return;
+    }
+
     if (_menuState == MenuState::Root) {
-        s_rootItems[sel]->execute(*this);
+        s_rootItems[itemIdx]->execute(*this);
         return;
     }
 
     if (_menuState == MenuState::Sub && _activeSubCmd) {
-        _activeSubCmd->onSubSelect(*this, sel);
+        _activeSubCmd->onSubSelect(*this, itemIdx);
         return;
     }
 }
@@ -899,23 +940,13 @@ void App::_drawLog(M5Canvas& c) const {
     c.setTextColor(Theme::FG, Theme::BG);
     c.setTextDatum(lgfx::top_left);
 
-    // Newest line at bottom; older lines stack upward
-    const int maxVis = (LOG_BOT - LOG_TOP) / LINE_H;
-    for (int i = 0; i < maxVis && i < LOG_LINES; i++) {
-        int idx = (_logHead - 1 - i + LOG_LINES * 4) % LOG_LINES;
-        if (_logBuf[idx][0] == '\0') break;
-        int y = LOG_BOT - LINE_H * (i + 1) + 1;
-        c.drawString(_logBuf[idx], MARGIN, y);
-    }
-}
+    const int maxVis      = (LOG_BOT - LOG_TOP) / LINE_H;
+    const bool cracking   = (_crackState == CrackState::Running);
+    int        scrollSlot = 0;
 
-// ── Input prompt ──────────────────────────────────────────────
-
-void App::_drawInput(M5Canvas& c) const {
-    c.drawFastHLine(0, INPUT_DIVIDER_Y, SCR_W, Theme::DIM);
-    c.fillRect(0, INPUT_DIVIDER_Y + 1, SCR_W, SCR_H - (INPUT_DIVIDER_Y + 1), Theme::BG);
-
-    if (_crackState == CrackState::Running) {
+    // While cracking, the bottom-most line is a live progress bar that
+    // updates in place; existing log entries scroll up one slot.
+    if (cracking) {
         uint32_t pct = (_crackCtx.fileSize > 0)
             ? (uint32_t)((uint64_t)_crackCtx.bytesDone * 100 / _crackCtx.fileSize)
             : 0;
@@ -925,13 +956,25 @@ void App::_drawInput(M5Canvas& c) const {
         bar[20] = '\0';
         char buf[40];
         snprintf(buf, sizeof(buf), "[%s] %lu%%", bar, (unsigned long)pct);
-        c.setFont(&fonts::Font0);
-        c.setTextSize(1);
-        c.setTextColor(Theme::FG, Theme::BG);
-        c.setTextDatum(lgfx::top_left);
-        c.drawString(buf, MARGIN, INPUT_Y);
-        return;
+        int y = LOG_BOT - LINE_H + 1;
+        c.drawString(buf, MARGIN, y);
+        scrollSlot = 1;  // shift normal log lines up by one slot
     }
+
+    // Newest log line just above the progress bar (or at the bottom if idle)
+    for (int i = 0; i + scrollSlot < maxVis && i < LOG_LINES; i++) {
+        int idx = (_logHead - 1 - i + LOG_LINES * 4) % LOG_LINES;
+        if (_logBuf[idx][0] == '\0') break;
+        int y = LOG_BOT - LINE_H * (i + 1 + scrollSlot) + 1;
+        c.drawString(_logBuf[idx], MARGIN, y);
+    }
+}
+
+// ── Input prompt ──────────────────────────────────────────────
+
+void App::_drawInput(M5Canvas& c) const {
+    c.drawFastHLine(0, INPUT_DIVIDER_Y, SCR_W, Theme::DIM);
+    c.fillRect(0, INPUT_DIVIDER_Y + 1, SCR_W, SCR_H - (INPUT_DIVIDER_Y + 1), Theme::BG);
 
     c.setFont(&fonts::Font0);
     c.setTextSize(1);
@@ -965,40 +1008,73 @@ void App::_drawMenuContent(M5Canvas& c) const {
     c.setFont(&fonts::Font0);
     c.setTextSize(1);
 
-    int nItems = 0, itemH = MENU_ITEM_H, menuTop = 0;
+    int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
         nItems = ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
     }
-    menuTop = INPUT_DIVIDER_Y - nItems * itemH;
+
+    int maxVis = (INPUT_DIVIDER_Y - HEADER_DIVIDER_Y - 4) / itemH;
+    if (maxVis < 3) maxVis = 3;
+    bool paginated     = nItems > maxVis;
+    int  slotCount     = paginated ? maxVis     : nItems;
+    int  itemsPerPage  = paginated ? maxVis - 2 : nItems;
+    int  firstItemSlot = paginated ? 1          : 0;
+    int  scroll        = _menuScroll;
+    if (paginated) {
+        int maxScroll = nItems - itemsPerPage;
+        if (scroll < 0)         scroll = 0;
+        if (scroll > maxScroll) scroll = maxScroll;
+    } else {
+        scroll = 0;
+    }
+    int menuTop = INPUT_DIVIDER_Y - slotCount * itemH;
 
     c.fillRect(0, menuTop, SCR_W, INPUT_DIVIDER_Y - menuTop, Theme::BG);
     c.drawFastHLine(0, menuTop, SCR_W, Theme::DIM);
 
-    if (_menuState == MenuState::Root) {
-        for (int i = 0; i < ROOT_N; i++) {
-            int y   = menuTop + i * MENU_ITEM_H;
-            bool hi = ((int)_menuHighlight == i);
-            if (hi) c.fillRect(0, y, SCR_W, MENU_ITEM_H, Theme::PALE);
-            c.setTextColor(Theme::FG, hi ? Theme::PALE : Theme::BG);
-            c.setTextDatum(lgfx::middle_left);
-            c.drawString(s_rootItems[i]->label(), MARGIN + 6, y + MENU_ITEM_H / 2);
-        }
-    }
+    auto drawItem = [&](int slot, const char* label, bool active) {
+        int y   = menuTop + slot * itemH;
+        bool hi = ((int)_menuHighlight == slot);
+        uint16_t col = active ? Theme::FG : Theme::DIM;
+        if (hi) c.fillRect(0, y, SCR_W, itemH, Theme::PALE);
+        c.setTextColor(col, hi ? Theme::PALE : Theme::BG);
+        c.setTextDatum(lgfx::middle_left);
+        c.drawString(label, MARGIN + 6, y + itemH / 2);
+    };
 
-    if (_menuState == MenuState::Sub && _activeSubCmd) {
-        for (int i = 0; i < nItems; i++) {
-            int y    = menuTop + i * itemH;
-            bool hi  = ((int)_menuHighlight == i);
-            bool act = _activeSubCmd->subIsActive(i);
-            uint16_t col = act ? Theme::FG : Theme::DIM;
-            if (hi) c.fillRect(0, y, SCR_W, itemH, Theme::PALE);
-            c.setTextColor(col, hi ? Theme::PALE : Theme::BG);
-            c.setTextDatum(lgfx::middle_left);
-            c.drawString(_activeSubCmd->subLabel(i), MARGIN + 6, y + itemH / 2);
+    auto drawNav = [&](int slot, const char* label, bool enabled) {
+        int y   = menuTop + slot * itemH;
+        bool hi = ((int)_menuHighlight == slot);
+        if (hi) c.fillRect(0, y, SCR_W, itemH, Theme::PALE);
+        c.setTextColor(enabled ? Theme::FG : Theme::DIM, hi ? Theme::PALE : Theme::BG);
+        c.setTextDatum(lgfx::middle_center);
+        c.drawString(label, SCR_W / 2, y + itemH / 2);
+    };
+
+    for (int slot = 0; slot < slotCount; slot++) {
+        if (paginated && slot == 0) {
+            drawNav(slot, "<< prev", scroll > 0);
+            continue;
+        }
+        if (paginated && slot == slotCount - 1) {
+            bool more = (scroll + itemsPerPage) < nItems;
+            drawNav(slot, "next >>", more);
+            continue;
+        }
+
+        int itemIdx = scroll + (slot - firstItemSlot);
+        if (itemIdx < 0 || itemIdx >= nItems) continue;
+
+        if (_menuState == MenuState::Root) {
+            drawItem(slot, s_rootItems[itemIdx]->label(), true);
+        } else if (_menuState == MenuState::Sub && _activeSubCmd) {
+            bool act = _activeSubCmd->subIsActive(itemIdx);
+            drawItem(slot, _activeSubCmd->subLabel(itemIdx), act);
             if (act) {
+                int y = menuTop + slot * itemH;
                 c.setTextDatum(lgfx::middle_right);
                 c.drawString("*", SCR_W - MARGIN - 6, y + itemH / 2);
             }

@@ -98,6 +98,8 @@ private:
 
     int8_t       _menuHighlight   = -1;
     bool         _menuJustOpened  = false;
+    int          _menuScroll      = 0;
+    int          _menuLastSubCount = -1;
 
     // ── Crack state ───────────────────────────────────────────────
     static constexpr int CRACK_QUEUE_DEPTH = 8;
