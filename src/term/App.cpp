@@ -8,14 +8,12 @@
 #include <esp_heap_caps.h>
 #include <stdarg.h>
 #include "command/ProfileCommand.h"
-#include "command/ThemeCommand.h"
-#include "command/BrightnessCommand.h"
 #include "command/PowerOffCommand.h"
 #include "command/CrackCommand.h"
 #include "command/NethuntCommand.h"
 #include "command/NettrapCommand.h"
 #include "command/NetguardCommand.h"
-#include "command/DisplayOffCommand.h"
+#include "command/SetCommand.h"
 #include "../core/FastWpaCrack.h"
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -33,13 +31,10 @@ static NettrapCommand    s_nettrap;
 static NetguardCommand   s_netguard;
 static ProfileCommand    s_profile;
 static CrackCommand      s_crack;
-static ThemeCommand      s_theme;
-static BrightnessCommand s_brightness;
-static DisplayOffCommand s_displayoff;
+static SetCommand        s_set;
 static PowerOffCommand   s_poweroff;
 static MenuCommand*      s_rootItems[] = {
-    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack,
-    &s_theme, &s_brightness, &s_displayoff, &s_poweroff
+    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_set, &s_poweroff
 };
 static constexpr int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
