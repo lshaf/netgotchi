@@ -1235,7 +1235,8 @@ void App::_drawMenuContent(M5Canvas& c) const {
             drawItem(slot, lbl, true);
         } else if (_menuState == MenuState::Sub && _activeSubCmd) {
             bool act = _activeSubCmd->subIsActive(itemIdx);
-            drawItem(slot, _activeSubCmd->subLabel(itemIdx), act);
+            bool lit = !_activeSubCmd->subUseDim() || act;
+            drawItem(slot, _activeSubCmd->subLabel(itemIdx), lit);
             if (act) {
                 int y = menuTop + slot * itemH;
                 c.setTextDatum(lgfx::middle_right);

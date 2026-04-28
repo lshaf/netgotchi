@@ -79,6 +79,10 @@ int SetCommand::subItemH() const {
     }
 }
 
+bool SetCommand::subUseDim() const {
+    return _section != Section::Root;
+}
+
 const char* SetCommand::inputHint() const {
     switch (_section) {
     case Section::Theme:      return "set theme";

@@ -9,6 +9,7 @@ public:
     int         subCount()              const override;
     const char* subLabel(int idx)       const override;
     bool        subIsActive(int idx)    const override;
+    bool        subUseDim()             const override;
     int         subItemH()              const override;
     const char* inputHint()             const override;
     void onSubSelect(IMenuHost& host, int idx) override;
