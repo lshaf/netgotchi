@@ -3,6 +3,10 @@
 #include "Stats.h"
 #include "command/MenuCommand.h"
 #include <M5GFX.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/task.h>
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 class App : public IMenuHost {
 public:
@@ -18,6 +22,7 @@ public:
     void setPendingTheme(int8_t idx) override;
     void setPendingBrightness(uint8_t val255) override;
     void setPendingPowerOff() override;
+    void     startCrack()                     override;
     uint32_t statsXp()         const override;
     uint32_t statsCaptures()   const override;
     uint32_t statsLevel()      const override;
@@ -80,6 +85,50 @@ private:
 
     int8_t       _menuHighlight   = -1;
     bool         _menuJustOpened  = false;
+
+    // ── Crack state ───────────────────────────────────────────────
+    struct CrackHandshake {
+        char     ssid[33]     = {};
+        uint8_t  ssid_len     = 0;
+        uint8_t  ap[6]        = {};
+        uint8_t  sta[6]       = {};
+        uint8_t  anonce[32]   = {};
+        uint8_t  snonce[32]   = {};
+        uint8_t  mic[16]      = {};
+        uint8_t  eapol[300]   = {};
+        uint16_t eapol_len    = 0;
+        uint8_t  prf_data[76] = {};
+    };
+
+    static constexpr int CRACK_QUEUE_DEPTH = 8;
+    static constexpr int CRACK_PASS_MAX    = 64;
+
+    struct CrackPwEntry { char pw[CRACK_PASS_MAX]; uint8_t len; };
+
+    struct CrackCtx {
+        CrackHandshake    hs;
+        QueueHandle_t     queue        = nullptr;
+        SemaphoreHandle_t doneSem      = nullptr;
+        TaskHandle_t      workerHandle = nullptr;
+        volatile bool     stop     = false;
+        volatile bool     done     = false;
+        volatile bool     found    = false;
+        char              foundPass[64]  = {};
+        char              curPass[64]    = {};
+        volatile uint32_t tested    = 0;
+        volatile uint32_t bytesDone = 0;
+        volatile uint32_t fileSize  = 0;
+    };
+
+    enum class CrackState : uint8_t { Idle, Running };
+    CrackState   _crackState      = CrackState::Idle;
+    CrackCtx     _crackCtx        = {};
+    TaskHandle_t _crackProdHandle = nullptr;
+
+    void _startCrack    ();
+    void _updateCracking(uint32_t ms);
+    static void _crackWorkerTask(void* param);
+    static void _crackProdTask  (void* param);
 
     void _logPush  (const char* line);
     void _qPushCmd (const char* fmt, ...);

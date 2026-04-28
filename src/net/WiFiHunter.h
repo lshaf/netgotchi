@@ -25,6 +25,8 @@ public:
     void init();
     void update(uint32_t ms);
     void clearFindings(uint32_t ms);
+    void pause()  { esp_wifi_set_promiscuous(false); }
+    void resume() { esp_wifi_set_promiscuous(true);  }
 
     Phase    phase()             const { return _phase; }
     uint8_t  channel()           const { return _channel; }
