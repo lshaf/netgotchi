@@ -35,6 +35,7 @@ public:
     void openSubMenu(MenuCommand* cmd) override;
     void setPendingTheme(int8_t idx) override;
     void setPendingBrightness(uint8_t val255) override;
+    void setPendingDisplayOff(uint16_t secs) override;
     void setPendingPowerOff() override;
     void     startCrack(const char* pcapPath, const char* dictPath) override;
     void     startNethunt()  override;
@@ -98,9 +99,14 @@ private:
     // ── Menu state ────────────────────────────────────────────────
     enum class MenuState : uint8_t { Closed, Root, Sub, PowerWait };
     MenuState    _menuState       = MenuState::Closed;
-    int8_t       _pendingTheme    = -1;
-    int          _pendingBright   = -1;
-    bool         _pendingPowerOff = false;
+    int8_t       _pendingTheme      = -1;
+    int          _pendingBright     = -1;
+    int          _pendingDisplayOff = -1;
+    bool         _pendingPowerOff   = false;
+
+    // ── Display-off state ─────────────────────────────────────────
+    uint32_t     _lastTouchMs  = 0;
+    bool         _displayOff   = false;
     uint32_t     _powerOffMs      = 0;
 
     MenuCommand* _activeSubCmd    = nullptr;  // command owning the open sub-menu

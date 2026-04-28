@@ -13,6 +13,7 @@ public:
     virtual void openSubMenu(MenuCommand* cmd) = 0;
     virtual void setPendingTheme(int8_t idx) = 0;
     virtual void setPendingBrightness(uint8_t val255) = 0;
+    virtual void setPendingDisplayOff(uint16_t secs) = 0;
     virtual void setPendingPowerOff() = 0;
     virtual void     startCrack(const char* pcapPath, const char* dictPath) = 0;
     virtual void     startNethunt()  = 0;

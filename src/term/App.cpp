@@ -15,6 +15,7 @@
 #include "command/NethuntCommand.h"
 #include "command/NettrapCommand.h"
 #include "command/NetguardCommand.h"
+#include "command/DisplayOffCommand.h"
 #include "../core/FastWpaCrack.h"
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -34,9 +35,11 @@ static ProfileCommand    s_profile;
 static CrackCommand      s_crack;
 static ThemeCommand      s_theme;
 static BrightnessCommand s_brightness;
+static DisplayOffCommand s_displayoff;
 static PowerOffCommand   s_poweroff;
 static MenuCommand*      s_rootItems[] = {
-    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_theme, &s_brightness, &s_poweroff
+    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack,
+    &s_theme, &s_brightness, &s_displayoff, &s_poweroff
 };
 static constexpr int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
@@ -92,9 +95,10 @@ void App::outPush(const char* text)   { _qPushOut("%s", text); }
 void App::menuClose() { _menuState = MenuState::Closed; _activeSubCmd = nullptr; _menuScroll = 0; _menuLastSubCount = -1; }
 void App::menuBack()  { _menuState = MenuState::Root;   _activeSubCmd = nullptr; _menuScroll = 0; _menuLastSubCount = -1; }
 void App::openSubMenu(MenuCommand* cmd) { _activeSubCmd = cmd; _menuState = MenuState::Sub; _menuScroll = 0; _menuLastSubCount = -1; }
-void App::setPendingTheme(int8_t idx)     { _pendingTheme  = idx; }
-void App::setPendingBrightness(uint8_t v) { _pendingBright = (int)v; }
-void App::setPendingPowerOff()            { _pendingPowerOff = true; }
+void App::setPendingTheme(int8_t idx)          { _pendingTheme      = idx; }
+void App::setPendingBrightness(uint8_t v)      { _pendingBright     = (int)v; }
+void App::setPendingDisplayOff(uint16_t secs)  { _pendingDisplayOff = (int)secs; }
+void App::setPendingPowerOff()                 { _pendingPowerOff   = true; }
 void App::startCrack(const char* pcapPath, const char* dictPath) {
     strncpy(_crackPcapPath,         pcapPath, sizeof(_crackPcapPath)         - 1);
     strncpy(_crackCtx.wordlistPath, dictPath, sizeof(_crackCtx.wordlistPath) - 1);
@@ -192,8 +196,9 @@ void App::init() {
     _hunter.pause();   // starts paused; user must tap netgotchi in menu to run
 
     uint32_t ms = millis();
-    _cursorMs   = ms;
-    _typeStepMs = ms;
+    _cursorMs    = ms;
+    _typeStepMs  = ms;
+    _lastTouchMs = ms;
 
     _qPushCmd("boot netgotchi");
     _qPushOut("net_gotchi term v0.1");
@@ -311,6 +316,10 @@ void App::_updateTyping(uint32_t ms) {
             Theme::applyBrightness((uint8_t)_pendingBright);
             Theme::save();
             _pendingBright = -1;
+        }
+        if (_pendingDisplayOff >= 0) {
+            Theme::applyDisplayOff((uint16_t)_pendingDisplayOff);
+            _pendingDisplayOff = -1;
         }
         if (_pendingPowerOff) {
             _pendingPowerOff = false;
@@ -866,6 +875,17 @@ void App::_updateCracking(uint32_t ms) {
 
 void App::_handleTouch(uint32_t ms) {
     auto t = M5.Touch.getDetail();
+
+    // Wake display on any touch
+    if (t.isPressed() || t.wasPressed() || t.wasReleased()) {
+        _lastTouchMs = ms;
+        if (_displayOff) {
+            M5.Display.setBrightness(Theme::brightness());
+            _displayOff = false;
+            return;  // consume the touch as a wake-only event
+        }
+    }
+
     if (_menuState == MenuState::PowerWait) return;
 
     bool pressed  = t.isPressed();
@@ -1259,18 +1279,29 @@ void App::update() {
         while (true) { delay(1000); }
     }
 
+    // Display-off timeout
+    uint16_t offSecs = Theme::displayOffSecs();
+    if (offSecs > 0 && !_displayOff) {
+        if (ms - _lastTouchMs >= (uint32_t)offSecs * 1000u) {
+            M5.Display.setBrightness(0);
+            _displayOff = true;
+        }
+    }
+
     _handleTouch(ms);
     if (_crackState == CrackState::Running) _updateCracking(ms);
     _updateHunting(ms);
     _updateTyping(ms);
 
-    _canvas->fillScreen(Theme::BG);
-    _drawHud(*_canvas, ms);
-    _drawLog(*_canvas);
-    if (_menuState == MenuState::Root || _menuState == MenuState::Sub) {
-        _drawMenuContent(*_canvas);
-    } else {
-        _drawInput(*_canvas);
+    if (!_displayOff) {
+        _canvas->fillScreen(Theme::BG);
+        _drawHud(*_canvas, ms);
+        _drawLog(*_canvas);
+        if (_menuState == MenuState::Root || _menuState == MenuState::Sub) {
+            _drawMenuContent(*_canvas);
+        } else {
+            _drawInput(*_canvas);
+        }
+        _canvas->pushSprite(0, 0);
     }
-    _canvas->pushSprite(0, 0);
 }
