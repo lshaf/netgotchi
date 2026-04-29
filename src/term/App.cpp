@@ -574,13 +574,14 @@ void App::_handleTouch(uint32_t ms) {
 
     if (!released) return;
 
-    int sel        = (int)_menuHighlight;
     _menuHighlight = -1;
 
-    if (!inMenu || sel < 0) {
+    if (!inMenu || hitSlot < 0) {
         menuClose();
         return;
     }
+
+    int sel = hitSlot;
 
     // Pagination controls — don't dispatch to the menu item.
     if (paginated && sel == 0) {
