@@ -4,9 +4,11 @@
 #include <cstdio>
 #include <cstdlib>
 
-static constexpr uint32_t HUNT_DWELL_MS  = 5000;
-static constexpr uint32_t DEAUTH_WAIT_MS = 2000;
-static constexpr uint8_t  DEAUTH_ROUNDS  = 3;
+static constexpr uint32_t HUNT_DWELL_MS    = 5000;
+static constexpr uint32_t DEAUTH_WAIT_MS   = 2000;
+static constexpr uint32_t DEAUTH_POST_MS   = 5000;
+static constexpr uint32_t EXHAUST_MS       = 60000;
+static constexpr uint8_t  DEAUTH_ROUNDS    = 3;
 
 void NethuntCommand::init(WiFiHunter* hunter) { _hunter = hunter; }
 
@@ -23,10 +25,7 @@ void NethuntCommand::startHardware() {
 }
 
 void NethuntCommand::stopService(IMenuHost& host) {
-    if (_hunter) {
-        _hunter->pause();
-        _hunter->cleanupInvalidPcaps();
-    }
+    if (_hunter) _hunter->pause();
     host.cmdPush("service nethunt stop");
 }
 
@@ -133,9 +132,15 @@ void NethuntCommand::update(IMenuHost& host, uint32_t ms) {
     case HuntPhase::CheckChannel: {
         int idx = findApOnChannel(_hunter, _channel, 0);
         if (idx < 0) {
-            _hunter->resetDeauthCountsOnChannel(_channel);
-            _channel   = (_channel % 13) + 1;
-            _huntPhase = HuntPhase::SetChannel;
+            if (_channel == 13) {
+                _hunter->clearFindings(ms);
+                _pauseUntilMs = ms + EXHAUST_MS;
+                _huntPhase    = HuntPhase::Exhaust;
+                host.cmdPush("nethunt exhaust 60");
+            } else {
+                _channel++;
+                _huntPhase = HuntPhase::SetChannel;
+            }
         } else {
             _deauthApIdx = (uint8_t)idx;
             _deauthRound = 1;
@@ -153,11 +158,22 @@ void NethuntCommand::update(IMenuHost& host, uint32_t ms) {
             if (ap && !ap->validated && _deauthRound < DEAUTH_ROUNDS) {
                 _hunter->deauthApByIdx(_deauthApIdx);
                 _deauthRound++;
-                _pauseUntilMs = ms + DEAUTH_WAIT_MS;
+                if (_deauthRound < DEAUTH_ROUNDS) {
+                    _pauseUntilMs = ms + DEAUTH_WAIT_MS;
+                } else {
+                    _pauseUntilMs = ms + DEAUTH_POST_MS;
+                    _huntPhase    = HuntPhase::PostDeauth;
+                }
             } else {
-                _huntPhase = HuntPhase::NextWifi;
+                _pauseUntilMs = ms + DEAUTH_POST_MS;
+                _huntPhase    = HuntPhase::PostDeauth;
             }
         }
+        break;
+
+    case HuntPhase::PostDeauth:
+        if (ms < _pauseUntilMs) break;
+        _huntPhase = HuntPhase::NextWifi;
         break;
 
     case HuntPhase::NextWifi: {
@@ -168,12 +184,22 @@ void NethuntCommand::update(IMenuHost& host, uint32_t ms) {
             _hunter->deauthApByIdx(_deauthApIdx);
             _pauseUntilMs = ms + DEAUTH_WAIT_MS;
             _huntPhase    = HuntPhase::Deauthing;
+        } else if (_channel == 13) {
+            _hunter->clearFindings(ms);
+            _pauseUntilMs = ms + EXHAUST_MS;
+            _huntPhase    = HuntPhase::Exhaust;
+            host.cmdPush("nethunt exhaust 60");
         } else {
-            _hunter->resetDeauthCountsOnChannel(_channel);
-            _channel   = (_channel % 13) + 1;
+            _channel++;
             _huntPhase = HuntPhase::SetChannel;
         }
         break;
     }
+
+    case HuntPhase::Exhaust:
+        if (ms < _pauseUntilMs) break;
+        _channel   = 1;
+        _huntPhase = HuntPhase::SetChannel;
+        break;
     }
 }

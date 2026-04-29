@@ -564,7 +564,7 @@ void WiFiHunter::_buildFilePath(char* buf, int bufLen, const ApInfo& ap) {
                   ? c : '_';
     }
 
-    snprintf(buf, bufLen, "/netgotchi/eapol/%s_%s_ch%02d.pcap", hex, safe, ap.channel);
+    snprintf(buf, bufLen, "/netgotchi/eapol/%s_%s.pcap", hex, safe);
 }
 
 bool WiFiHunter::_pcapIsCompletePath(const char* path) {
@@ -614,30 +614,6 @@ bool WiFiHunter::_pcapIsComplete(const ApInfo& ap) {
     return _pcapIsCompletePath(path);
 }
 
-void WiFiHunter::cleanupInvalidPcaps() {
-    File dir = SD.open("/netgotchi/eapol");
-    if (!dir) return;
-
-    File f = dir.openNextFile();
-    while (f) {
-        if (!f.isDirectory()) {
-            const char* full = f.name();
-            const char* base = strrchr(full, '/');
-            base = base ? base + 1 : full;
-            int nl = (int)strlen(base);
-            if (nl >= 5 && strcmp(base + nl - 5, ".pcap") == 0) {
-                char path[64];
-                snprintf(path, sizeof(path), "/netgotchi/eapol/%s", base);
-                f.close();
-                if (!_pcapIsCompletePath(path)) {
-                    SD.remove(path);
-                }
-                f = dir.openNextFile();
-                continue;
-            }
-        }
-        f.close();
-        f = dir.openNextFile();
-    }
-    dir.close();
+bool WiFiHunter::pcapIsComplete(const char* path) {
+    return _pcapIsCompletePath(path);
 }

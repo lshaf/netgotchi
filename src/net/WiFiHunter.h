@@ -28,7 +28,7 @@ public:
     void setChannel(uint8_t ch);
     void deauthApByIdx(uint8_t idx);
     void resetDeauthCountsOnChannel(uint8_t ch);
-    void cleanupInvalidPcaps();
+    bool pcapIsComplete(const char* path);
 
     uint8_t  channel()                   const { return _channel; }
     uint8_t  apCount()                   const { return _apCount; }

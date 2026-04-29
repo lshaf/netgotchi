@@ -16,6 +16,7 @@
 #include "command/NetguardCommand.h"
 #include "command/SetCommand.h"
 #include "command/VaultCommand.h"
+#include "command/CleanEapolCommand.h"
 
 using namespace AppLayout;
 
@@ -29,8 +30,9 @@ CrackCommand      s_crack;
 VaultCommand      s_vault;
 SetCommand        s_set;
 PowerOffCommand   s_poweroff;
+CleanEapolCommand s_cleaneapol;
 MenuCommand*      s_rootItems[] = {
-    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_vault, &s_set, &s_poweroff
+    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_vault, &s_cleaneapol, &s_set, &s_poweroff
 };
 int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
@@ -98,6 +100,7 @@ void App::init() {
     s_nettrap.init(&_hunter);
     s_netguard.init(&_guard);
     s_profile.init(&_stats);
+    s_cleaneapol.init(&_hunter);
 
     uint32_t ms = millis();
     _cursorMs    = ms;

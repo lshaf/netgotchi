@@ -19,10 +19,7 @@ void NettrapCommand::startHardware() {
 }
 
 void NettrapCommand::stopService(IMenuHost& host) {
-    if (_hunter) {
-        _hunter->pause();
-        _hunter->cleanupInvalidPcaps();
-    }
+    if (_hunter) _hunter->pause();
     host.cmdPush("service nettrap stop");
 }
 
