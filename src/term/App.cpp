@@ -286,9 +286,9 @@ void App::_handleTouch(uint32_t ms) {
     int maxVis = (INPUT_DIVIDER_Y - HEADER_DIVIDER_Y - 4) / itemH;
     if (maxVis < 3) maxVis = 3;
     bool paginated     = nItems > maxVis;
-    int  slotCount     = paginated ? maxVis     : nItems;
-    int  itemsPerPage  = paginated ? maxVis - 2 : nItems;
-    int  firstItemSlot = 0;
+    int  slotCount     = paginated ? maxVis + 1 : nItems;
+    int  itemsPerPage  = paginated ? maxVis     : nItems;
+    int  firstItemSlot = paginated ? 1 : 0;
     if (paginated) {
         int maxScroll = nItems - itemsPerPage;
         if (_menuScroll < 0)         _menuScroll = 0;
@@ -307,13 +307,20 @@ void App::_handleTouch(uint32_t ms) {
     }
 
     if (pressed) {
-        _menuHighlight = (int8_t)hitSlot;
+        if (paginated && hitSlot == 0) {
+            _navHighlight  = (tx < SCR_W / 2) ? 0 : 1;
+            _menuHighlight = -1;
+        } else {
+            _menuHighlight = (int8_t)hitSlot;
+            _navHighlight  = -1;
+        }
         return;
     }
 
     if (!released) return;
 
     _menuHighlight = -1;
+    _navHighlight  = -1;
 
     if (!inMenu || hitSlot < 0) {
         menuClose();
@@ -322,15 +329,15 @@ void App::_handleTouch(uint32_t ms) {
 
     int sel = hitSlot;
 
-    if (paginated && sel == slotCount - 2) {
-        _menuScroll -= itemsPerPage;
-        if (_menuScroll < 0) _menuScroll = 0;
-        return;
-    }
-    if (paginated && sel == slotCount - 1) {
-        _menuScroll += itemsPerPage;
-        int maxScroll = nItems - itemsPerPage;
-        if (_menuScroll > maxScroll) _menuScroll = maxScroll;
+    if (paginated && sel == 0) {
+        if (tx < SCR_W / 2) {
+            _menuScroll -= itemsPerPage;
+            if (_menuScroll < 0) _menuScroll = 0;
+        } else {
+            _menuScroll += itemsPerPage;
+            int maxScroll = nItems - itemsPerPage;
+            if (_menuScroll > maxScroll) _menuScroll = maxScroll;
+        }
         return;
     }
 

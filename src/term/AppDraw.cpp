@@ -153,9 +153,9 @@ void App::_drawMenuContent(M5Canvas& c) const {
     int maxVis = (INPUT_DIVIDER_Y - HEADER_DIVIDER_Y - 4) / itemH;
     if (maxVis < 3) maxVis = 3;
     bool paginated     = nItems > maxVis;
-    int  slotCount     = paginated ? maxVis     : nItems;
-    int  itemsPerPage  = paginated ? maxVis - 2 : nItems;
-    int  firstItemSlot = 0;
+    int  slotCount     = paginated ? maxVis + 1 : nItems;
+    int  itemsPerPage  = paginated ? maxVis     : nItems;
+    int  firstItemSlot = paginated ? 1 : 0;
     int  scroll        = _menuScroll;
     if (paginated) {
         int maxScroll = nItems - itemsPerPage;
@@ -176,26 +176,23 @@ void App::_drawMenuContent(M5Canvas& c) const {
         if (hi) c.fillRect(0, y, SCR_W, itemH, Theme::PALE);
         c.setTextColor(col, hi ? Theme::PALE : Theme::BG);
         c.setTextDatum(lgfx::middle_left);
-        c.drawString(label, MARGIN + 6, y + itemH / 2);
-    };
-
-    auto drawNav = [&](int slot, const char* label, bool enabled) {
-        int y   = menuTop + slot * itemH;
-        bool hi = ((int)_menuHighlight == slot);
-        if (hi) c.fillRect(0, y, SCR_W, itemH, Theme::PALE);
-        c.setTextColor(enabled ? Theme::FG : Theme::DIM, hi ? Theme::PALE : Theme::BG);
-        c.setTextDatum(lgfx::middle_center);
-        c.drawString(label, SCR_W / 2, y + itemH / 2);
+        c.drawString(label, MARGIN + 6, y + itemH / 2 + 1);
     };
 
     for (int slot = 0; slot < slotCount; slot++) {
-        if (paginated && slot == slotCount - 2) {
-            drawNav(slot, "<< prev", scroll > 0);
-            continue;
-        }
-        if (paginated && slot == slotCount - 1) {
-            bool more = (scroll + itemsPerPage) < nItems;
-            drawNav(slot, "next >>", more);
+        if (paginated && slot == 0) {
+            bool hasPrev = scroll > 0;
+            bool hasNext = (scroll + itemsPerPage) < nItems;
+            int y = menuTop + slot * itemH;
+            if (_navHighlight == 0) c.fillRect(0,         y, SCR_W / 2, itemH, Theme::PALE);
+            if (_navHighlight == 1) c.fillRect(SCR_W / 2, y, SCR_W / 2, itemH, Theme::PALE);
+            c.setTextDatum(lgfx::middle_center);
+            c.setTextColor(hasPrev ? Theme::FG : Theme::DIM, (_navHighlight == 0) ? Theme::PALE : Theme::BG);
+            c.drawString("<< prev", SCR_W / 4, y + itemH / 2 + 1);
+            c.drawFastVLine(SCR_W / 2, y, itemH, Theme::DIM);
+            c.setTextColor(hasNext ? Theme::FG : Theme::DIM, (_navHighlight == 1) ? Theme::PALE : Theme::BG);
+            c.drawString("next >>", SCR_W * 3 / 4, y + itemH / 2 + 1);
+            c.drawFastHLine(0, y + itemH - 1, SCR_W, Theme::DIM);
             continue;
         }
 

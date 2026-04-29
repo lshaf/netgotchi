@@ -78,6 +78,7 @@ private:
     MenuCommand* _activeSubCmd    = nullptr;
 
     int8_t       _menuHighlight   = -1;
+    int8_t       _navHighlight    = -1;
     bool         _menuJustOpened  = false;
     int          _menuScroll      = 0;
     int          _menuLastSubCount = -1;
