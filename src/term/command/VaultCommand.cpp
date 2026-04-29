@@ -32,7 +32,7 @@ void VaultCommand::onSubSelect(IMenuHost& host, int idx) {
         host.outPush(buf);
     };
 
-    snprintf(buf, sizeof(buf), "vault %s", _ssidNames[idx]);
+    snprintf(buf, sizeof(buf), "vault %s", _fileNames[idx]);
     host.menuClose();
     host.cmdPush(buf);
 
