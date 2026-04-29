@@ -27,7 +27,6 @@ public:
     bool     isCharging()      const;
 
 private:
-    static constexpr uint32_t MAGIC             = 0xDEADBEEF;
     static constexpr uint32_t XP_PER_CAPTURE    = 4;
     static constexpr uint32_t XP_PER_CRACK      = 8;
     static constexpr uint32_t XP_PER_DISCOVER   = 1;
