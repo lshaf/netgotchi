@@ -161,7 +161,7 @@ void NethuntCommand::update(IMenuHost& host, uint32_t ms) {
         break;
 
     case HuntPhase::NextWifi: {
-        int idx = findApOnChannel(_hunter, _channel, _deauthApIdx + 1);
+        int idx = findApOnChannel(_hunter, _channel, 0);
         if (idx >= 0) {
             _deauthApIdx = (uint8_t)idx;
             _deauthRound = 1;
