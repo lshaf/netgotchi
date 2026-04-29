@@ -881,7 +881,7 @@ onmessage=async function(e){
     }
     tested++;
     const now=Date.now();
-    if(now-lastUpd>=150){lastUpd=now;postMessage({type:"progress",tested,total});}
+    if(now-lastUpd>=150){lastUpd=now;postMessage({type:"progress",tested,total});await new Promise(r=>setTimeout(r,0));}
     if(hit){postMessage({type:"done",found:true,pw:words[i],tested});return;}
   }
   postMessage({type:"done",found:false,stopped:_stop,tested});

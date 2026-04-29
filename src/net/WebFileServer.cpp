@@ -370,7 +370,8 @@ void WebFileServer::_prepareRoutes() {
             if (!f) { req->send(500, "text/plain", "write failed"); return; }
             f.print(pw);
             f.close();
-            _pushActivity("[web] crack %.12s", bssid);
+            const char* _pf = strrchr(pcapPath.c_str(), '/');
+            _pushActivity("[web] cracked (%.28s)", _pf ? _pf + 1 : pcapPath.c_str());
             if (award && _crackSaveCb) _crackSaveCb();
             req->send(200, "text/plain", "saved");
 

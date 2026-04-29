@@ -382,6 +382,17 @@ void App::update() {
         }
     }
 
+    if (M5.BtnA.wasPressed()) {
+        if (_displayOff) {
+            M5.Display.setBrightness(Theme::brightness());
+            _displayOff = false;
+            _lastTouchMs = ms;
+        } else {
+            M5.Display.setBrightness(0);
+            _displayOff = true;
+        }
+    }
+
     _handleTouch(ms);
     if (_currentService)
         _currentService->update(*this, ms);
