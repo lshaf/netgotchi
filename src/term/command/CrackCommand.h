@@ -52,7 +52,7 @@ private:
     bool     _pcapLoaded = false;
     char     _selPcap[64]              = {};
     char     _filePaths[MAX_FILES][64] = {};
-    char     _fileNames[MAX_FILES][32] = {};
+    char     _fileNames[MAX_FILES][52] = {};
     int      _fileCount  = 0;
     mutable char _hint[52] = {};
 

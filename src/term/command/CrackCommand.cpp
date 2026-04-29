@@ -258,7 +258,7 @@ void CrackCommand::onSubSelect(IMenuHost& host, int idx) {
         dictPath = "builtin";
         dictName = "builtin";
     } else {
-        _pcapLoaded = false;
+        _loadPcapList();
         _subState = kPcap;
         return;
     }
@@ -287,7 +287,7 @@ void CrackCommand::_loadPcapList() {
             int nl = (int)strlen(base);
             if (nl >= 5 && strcmp(base + nl - 5, ".pcap") == 0) {
                 snprintf(_filePaths[_fileCount], 64, "/netgotchi/eapol/%s", base);
-                snprintf(_fileNames[_fileCount], 32, "%.31s", base);
+                snprintf(_fileNames[_fileCount], 52, "%.51s", base);
                 _fileCount++;
             }
         }
@@ -309,7 +309,7 @@ void CrackCommand::_loadDictList() {
             const char* base = strrchr(full, '/');
             base = base ? base + 1 : full;
             snprintf(_filePaths[_fileCount], 64, "/netgotchi/dictionaries/%s", base);
-            snprintf(_fileNames[_fileCount], 32, "%.31s", base);
+            snprintf(_fileNames[_fileCount], 52, "%.51s", base);
             _fileCount++;
         }
         f.close();
