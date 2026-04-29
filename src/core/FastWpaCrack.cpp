@@ -39,7 +39,7 @@
   R4(d,e,a,b,c,72);R4(c,d,e,a,b,73);R4(b,c,d,e,a,74);R4(a,b,c,d,e,75); \
   R4(e,a,b,c,d,76);R4(d,e,a,b,c,77);R4(c,d,e,a,b,78);R4(b,c,d,e,a,79)
 
-__attribute__((optimize("O3"), hot))
+__attribute__((section(".iram1.text"), optimize("O3"), hot))
 static void sha1_transform(uint32_t state[5], const uint8_t buf[64]) {
   uint32_t a=state[0], b=state[1], c=state[2], d=state[3], e=state[4];
   uint32_t blk[16], tmp;
@@ -49,7 +49,7 @@ static void sha1_transform(uint32_t state[5], const uint8_t buf[64]) {
 }
 
 // Specialized: exactly 20 bytes with SHA1 padding pre-baked (hot PBKDF2 path)
-__attribute__((optimize("O3"), hot))
+__attribute__((section(".iram1.text"), optimize("O3"), hot))
 static void sha1_transform_20b(uint32_t state[5], const uint8_t data[20]) {
   uint32_t a=state[0], b=state[1], c=state[2], d=state[3], e=state[4];
   uint32_t blk[16], tmp;
@@ -67,7 +67,7 @@ static void sha1_transform_20b(uint32_t state[5], const uint8_t data[20]) {
 }
 
 // Specialized: 20 bytes as uint32_t words (already big-endian)
-__attribute__((optimize("O3"), hot))
+__attribute__((section(".iram1.text"), optimize("O3"), hot))
 static void sha1_transform_20w(uint32_t state[5], const uint32_t words[5]) {
   uint32_t a=state[0], b=state[1], c=state[2], d=state[3], e=state[4];
   uint32_t blk[16];
@@ -80,10 +80,12 @@ static void sha1_transform_20w(uint32_t state[5], const uint32_t words[5]) {
   state[0]+=a; state[1]+=b; state[2]+=c; state[3]+=d; state[4]+=e;
 }
 
+__attribute__((section(".iram1.text")))
 static inline void sha1_extract(const uint32_t state[5], uint8_t digest[20]) {
   for (int i=0; i<5; i++) { uint32_t s=__builtin_bswap32(state[i]); memcpy(digest+i*4, &s, 4); }
 }
 
+__attribute__((section(".iram1.text")))
 static void sha1_init(FastSha1Ctx &ctx) {
   ctx.state[0]=0x67452301u; ctx.state[1]=0xEFCDAB89u;
   ctx.state[2]=0x98BADCFEu; ctx.state[3]=0x10325476u;
@@ -91,6 +93,7 @@ static void sha1_init(FastSha1Ctx &ctx) {
   ctx.count[0]=ctx.count[1]=0;
 }
 
+__attribute__((section(".iram1.text")))
 static void sha1_update(FastSha1Ctx &ctx, const uint8_t *data, size_t len) {
   uint32_t j = (ctx.count[0] >> 3) & 63;
   if ((ctx.count[0] += (uint32_t)(len << 3)) < (uint32_t)(len << 3)) ctx.count[1]++;
@@ -107,6 +110,7 @@ static void sha1_update(FastSha1Ctx &ctx, const uint8_t *data, size_t len) {
   }
 }
 
+__attribute__((section(".iram1.text")))
 static void sha1_final(FastSha1Ctx &ctx, uint8_t digest[20]) {
   uint64_t total_bits = ((uint64_t)ctx.count[1] << 32) | ctx.count[0];
   uint32_t j = (ctx.count[0] >> 3) & 63;
@@ -120,6 +124,7 @@ static void sha1_final(FastSha1Ctx &ctx, uint8_t digest[20]) {
 
 // ── HMAC-SHA1 ─────────────────────────────────────────────────────────────
 
+__attribute__((section(".iram1.text")))
 void fast_hmac_precompute(const uint8_t *key, size_t klen, FastHmacPre &out) {
   uint8_t k_ipad[64], k_opad[64];
   memset(k_ipad, 0x36, 64);
@@ -137,7 +142,7 @@ void fast_hmac_precompute(const uint8_t *key, size_t klen, FastHmacPre &out) {
 }
 
 // HMAC-SHA1 20-byte word-level (hot PBKDF2 inner loop)
-__attribute__((optimize("O3"), hot))
+__attribute__((section(".iram1.text"), optimize("O3"), hot))
 static void hmac_sha1_20w(const FastHmacPre &pre, const uint32_t data[5], uint32_t out[5]) {
   uint32_t state[5];
   memcpy(state, pre.inner.state, 20);
@@ -148,6 +153,7 @@ static void hmac_sha1_20w(const FastHmacPre &pre, const uint32_t data[5], uint32
   memcpy(out, state, 20);
 }
 
+__attribute__((section(".iram1.text")))
 void fast_hmac_sha1_pre(const FastHmacPre &pre, const uint8_t *data, size_t dlen, uint8_t *out20) {
   uint8_t inner_hash[20];
   FastSha1Ctx ctx = pre.inner;
@@ -160,7 +166,7 @@ void fast_hmac_sha1_pre(const FastHmacPre &pre, const uint8_t *data, size_t dlen
 
 // ── PBKDF2-HMAC-SHA1 (4096 iterations, 32-byte output) ───────────────────
 
-__attribute__((optimize("O3"), hot))
+__attribute__((section(".iram1.text"), optimize("O3"), hot))
 void fast_pbkdf2(const FastHmacPre &pre, const uint8_t *salt, size_t slen,
                  uint32_t iters, uint8_t out[32]) {
   uint8_t salt_int[40]; // max SSID 32 + 4
@@ -193,6 +199,7 @@ void fast_pbkdf2(const FastHmacPre &pre, const uint8_t *salt, size_t slen,
 
 // ── PRF-512 ───────────────────────────────────────────────────────────────
 
+__attribute__((section(".iram1.text")))
 void fast_prf512(const uint8_t pmk[32], const uint8_t *prf_data, uint8_t ptk[64]) {
   static const char label[] = "Pairwise key expansion";
   uint8_t ctr = 0;
@@ -221,7 +228,7 @@ void fast_prf512(const uint8_t pmk[32], const uint8_t *prf_data, uint8_t ptk[64]
 
 // ── Full password test ────────────────────────────────────────────────────
 
-__attribute__((optimize("O3"), hot))
+__attribute__((section(".iram1.text"), optimize("O3"), hot))
 bool fast_wpa2_try_password(const char *pw, uint8_t pw_len,
                             const char *ssid, uint8_t ssid_len,
                             const uint8_t *prf_data,

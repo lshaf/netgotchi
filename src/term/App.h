@@ -4,23 +4,6 @@
 #include "Stats.h"
 #include "command/MenuCommand.h"
 #include <M5GFX.h>
-#include <freertos/FreeRTOS.h>
-#include <freertos/task.h>
-#include <freertos/queue.h>
-#include <freertos/semphr.h>
-
-struct CrackHandshake {
-    char     ssid[33]     = {};
-    uint8_t  ssid_len     = 0;
-    uint8_t  ap[6]        = {};
-    uint8_t  sta[6]       = {};
-    uint8_t  anonce[32]   = {};
-    uint8_t  snonce[32]   = {};
-    uint8_t  mic[16]      = {};
-    uint8_t  eapol[300]   = {};
-    uint16_t eapol_len    = 0;
-    uint8_t  prf_data[76] = {};
-};
 
 class App : public IMenuHost {
 public:
@@ -37,7 +20,7 @@ public:
     void setPendingBrightness(uint8_t val255) override;
     void setPendingDisplayOff(uint16_t secs) override;
     void setPendingPowerOff() override;
-    void     startCrack(const char* pcapPath, const char* dictPath) override;
+    bool     typingIdle()    const override;
     void     startNethunt()  override;
     void     startNettrap()  override;
     void     startNetguard() override;
@@ -107,44 +90,14 @@ private:
     // ── Display-off state ─────────────────────────────────────────
     uint32_t     _lastTouchMs  = 0;
     bool         _displayOff   = false;
-    uint32_t     _powerOffMs      = 0;
+    uint32_t     _powerOffMs   = 0;
 
-    MenuCommand* _activeSubCmd    = nullptr;  // command owning the open sub-menu
+    MenuCommand* _activeSubCmd    = nullptr;
 
     int8_t       _menuHighlight   = -1;
     bool         _menuJustOpened  = false;
     int          _menuScroll      = 0;
     int          _menuLastSubCount = -1;
-
-    // ── Crack state ───────────────────────────────────────────────
-    static constexpr int CRACK_QUEUE_DEPTH = 8;
-    static constexpr int CRACK_PASS_MAX    = 64;
-
-    struct CrackPwEntry { char pw[CRACK_PASS_MAX]; uint8_t len; };
-
-    struct CrackCtx {
-        CrackHandshake    hs;
-        char              wordlistPath[64] = {};
-        QueueHandle_t     queue        = nullptr;
-        SemaphoreHandle_t doneSem      = nullptr;
-        TaskHandle_t      workerHandle = nullptr;
-        volatile bool     stop     = false;
-        volatile bool     done     = false;
-        volatile bool     found    = false;
-        char              foundPass[64]  = {};
-        char              curPass[64]    = {};
-        volatile uint32_t tested    = 0;
-        volatile uint32_t bytesDone = 0;
-        volatile uint32_t fileSize  = 0;
-    };
-
-    enum class CrackState : uint8_t { Idle, Running };
-    CrackState   _crackState      = CrackState::Idle;
-    CrackCtx     _crackCtx        = {};
-    TaskHandle_t _crackProdHandle = nullptr;
-    char         _crackPcapPath[64] = {};
-    bool         _pendingCrack    = false;
-    uint32_t     _crackStartMs    = 0;
 
     // ── Hunt / Guard state ────────────────────────────────────────
     bool         _nethuntRunning  = false;
@@ -153,12 +106,6 @@ private:
     void         _stopNethunt();
     void         _stopNettrap();
     void         _stopNetguard();
-    void         _stopCrack();
-
-    void _startCrack    ();
-    void _updateCracking(uint32_t ms);
-    static void _crackWorkerTask(void* param);
-    static void _crackProdTask  (void* param);
 
     void _logPush  (const char* line);
     void _qPushCmd (const char* fmt, ...);

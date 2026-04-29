@@ -15,7 +15,7 @@ public:
     virtual void setPendingBrightness(uint8_t val255) = 0;
     virtual void setPendingDisplayOff(uint16_t secs) = 0;
     virtual void setPendingPowerOff() = 0;
-    virtual void     startCrack(const char* pcapPath, const char* dictPath) = 0;
+    virtual bool     typingIdle()    const = 0;
     virtual void     startNethunt()  = 0;
     virtual void     startNettrap()  = 0;
     virtual void     startNetguard() = 0;
