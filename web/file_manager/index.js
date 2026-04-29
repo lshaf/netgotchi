@@ -113,7 +113,9 @@ async function requestPost (url, param) {
         reject(new Error(`Request failed with status ${req.status}`));
       }
     };
-    req.onerror = () => reject(new Error("Network error"));
+    req.onerror   = () => reject(new Error("Network error"));
+    req.ontimeout = () => reject(new Error("Request timed out"));
+    req.timeout   = 30000;
     req.send(fd);
   });
 }
@@ -761,6 +763,7 @@ const _PRE2={ip:new Uint8Array(64),op:new Uint8Array(64)};
 const _PRE3={ip:new Uint8Array(64),op:new Uint8Array(64)};
 const _PWBUF=new Uint8Array(64);
 const _enc=new TextEncoder();
+// "Pairwise key expansion\0" — 23 bytes, matches sizeof(label) in fast_prf512
 const _PRF_LABEL=new Uint8Array([80,97,105,114,119,105,115,101,32,107,101,121,32,101,120,112,97,110,115,105,111,110,0]);
 let _pin=null,_stop=false;
 
@@ -827,22 +830,59 @@ function _tryPw(pw,hs){
   for(let i=0;i<16;i++)if(_SOUT[i]!==hs.mic[i])return false;
   return true;
 }
-onmessage=function(e){
+
+// WASM state
+let _wasm=null,_wasmMem=null,_pPw,_pSsid,_pPrf,_pEapol,_pMic;
+
+async function _loadWasm(){
+  try{
+    const r=await fetch('/crack.wasm');
+    if(!r.ok)return false;
+    const {instance:inst}=await WebAssembly.instantiate(await r.arrayBuffer(),{});
+    const e=inst.exports;
+    _wasmMem=new Uint8Array(e.memory.buffer);
+    _pPw=e.wasm_pw_buf();_pSsid=e.wasm_ssid_buf();
+    _pPrf=e.wasm_prf_data_buf();_pEapol=e.wasm_eapol_buf();_pMic=e.wasm_mic_buf();
+    _wasm=e;return true;
+  }catch(e){return false;}
+}
+
+onmessage=async function(e){
   const msg=e.data;
   if(msg.type==="stop"){_stop=true;return;}
   if(msg.type!=="start")return;
   _stop=false;
   const hs=msg.hs,words=msg.words,total=words.length;
-  _pin=new Uint8Array(_PRF_LABEL.length+hs.prfData.length);
-  _pin.set(_PRF_LABEL);_pin.set(hs.prfData,_PRF_LABEL.length);
+
+  const wasmOk=await _loadWasm();
+
+  if(wasmOk){
+    _wasmMem.set(hs.ssidBytes,_pSsid);
+    _wasmMem.set(hs.prfData,_pPrf);
+    _wasmMem.set(hs.eapol,_pEapol);
+    _wasmMem.set(hs.mic,_pMic);
+  } else {
+    // label(23) + prfData(76) + counter byte(1) = 100, matches fast_prf512
+    _pin=new Uint8Array(100);
+    _pin.set(_PRF_LABEL,0);
+    _pin.set(hs.prfData,_PRF_LABEL.length);
+    // _pin[99]=0 already (block counter for i=0)
+  }
+
   let tested=0,lastUpd=Date.now();
   for(let i=0;i<total&&!_stop;i++){
-    if(_tryPw(words[i],hs)){
-      postMessage({type:"done",found:true,pw:words[i],tested:i+1});return;
+    let hit;
+    if(wasmOk){
+      const r=_enc.encodeInto(words[i],_PWBUF);
+      _wasmMem.set(_PWBUF.subarray(0,r.written),_pPw);
+      hit=_wasm.wasm_try_password(r.written,hs.ssidBytes.length,hs.eapol.length)!==0;
+    }else{
+      hit=_tryPw(words[i],hs);
     }
     tested++;
     const now=Date.now();
     if(now-lastUpd>=150){lastUpd=now;postMessage({type:"progress",tested,total});}
+    if(hit){postMessage({type:"done",found:true,pw:words[i],tested});return;}
   }
   postMessage({type:"done",found:false,stopped:_stop,tested});
 };
@@ -971,11 +1011,14 @@ async function runCrack(pcapPath) {
   try {
     let url = "/download?file=" + encodeURIComponent(pcapPath);
     if (IS_DEV) url = "/puteros" + url;
-    const resp = await fetch(url, { credentials: "include" });
+    const ac = new AbortController();
+    const tid = setTimeout(() => ac.abort(), 30000);
+    const resp = await fetch(url, { credentials: "include", signal: ac.signal });
+    clearTimeout(tid);
     if (!resp.ok) throw new Error("HTTP " + resp.status);
     var pcapData = new Uint8Array(await resp.arrayBuffer());
   } catch (e) {
-    _crackDone("PCAP error: " + e.message);
+    _crackDone("PCAP error: " + (e.name === "AbortError" ? "timed out" : e.message));
     _crackRunning = false;
     return;
   }

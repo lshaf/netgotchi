@@ -9,6 +9,7 @@ FILES = [
     ("index.html", "WEBFILE_HTML"),
     ("index.css",  "WEBFILE_CSS"),
     ("index.js",   "WEBFILE_JS"),
+    ("crack.wasm", "WEBFILE_WASM"),
 ]
 
 # ── Minifiers ─────────────────────────────────────────────────
@@ -108,18 +109,85 @@ def check_js(text, fname):
     finally:
         os.unlink(tmp)
 
+# ── WASM build ────────────────────────────────────────────────
+
+def build_wasm(c_path, wasm_path):
+    exports = [
+        "wasm_try_password", "wasm_pw_buf", "wasm_ssid_buf",
+        "wasm_prf_data_buf", "wasm_eapol_buf", "wasm_mic_buf",
+    ]
+    export_flags = ["--export=" + e for e in exports]
+
+    candidates = ["clang", "clang-18", "clang-17", "clang-16", "clang-15"]
+    for cc in candidates:
+        r = subprocess.run([cc, "--version"], capture_output=True)
+        if r.returncode != 0:
+            continue
+        cmd = [cc, "--target=wasm32-unknown-unknown",
+               "-O3", "-nostdlib", "-fno-builtin",
+               "-Wl,--no-entry"] + ["-Wl," + f for f in export_flags] + \
+              ["-o", wasm_path, c_path]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0:
+            print("[embed_web] WASM built: %s" % wasm_path)
+            return True
+        print("[embed_web] %s wasm32 failed: %s" % (cc, r.stderr.strip()))
+        break
+
+    # Try emscripten
+    r = subprocess.run(["emcc", "--version"], capture_output=True)
+    if r.returncode == 0:
+        exported = ",".join('"_' + e + '"' for e in exports)
+        cmd = ["emcc", "-O3", "-s", "STANDALONE_WASM=1",
+               "-s", "EXPORTED_FUNCTIONS=[%s]" % exported,
+               "--no-entry", "-o", wasm_path, c_path]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode == 0:
+            print("[embed_web] WASM built via emcc: %s" % wasm_path)
+            return True
+        print("[embed_web] emcc failed: %s" % r.stderr.strip())
+
+    print("[embed_web] WARNING: cannot build WASM — install LLVM (brew install llvm) or emscripten")
+    return False
+
 # ── Main ──────────────────────────────────────────────────────
 
 lines = ["#pragma once", "#include <pgmspace.h>", ""]
 
 for fname, var in FILES:
     fpath = os.path.join(SRC_DIR, fname)
+    ext   = os.path.splitext(fname)[1]
+
+    if ext == ".wasm":
+        c_path = fpath.replace(".wasm", ".c")
+        if not os.path.exists(fpath) or (
+            os.path.exists(c_path) and
+            os.path.getmtime(c_path) > os.path.getmtime(fpath)
+        ):
+            if not build_wasm(c_path, fpath):
+                print("[embed_web] WARNING: %s not available, skipping" % fname)
+                continue
+        if not os.path.exists(fpath):
+            print("[embed_web] WARNING: %s not found, skipping" % fpath)
+            continue
+        with open(fpath, "rb") as f:
+            data = f.read()
+        rows = []
+        for i in range(0, len(data), 16):
+            rows.append("  " + ", ".join("0x%02x" % b for b in data[i:i+16]))
+        lines.append("static const uint8_t %s[] PROGMEM = {" % var)
+        lines.append(",\n".join(rows))
+        lines.append("};")
+        lines.append("static const size_t %s_LEN = %d;" % (var, len(data)))
+        lines.append("")
+        print("[embed_web] %s -> %s (%d bytes)" % (fname, var, len(data)))
+        continue
+
     if not os.path.exists(fpath):
         print("[embed_web] WARNING: %s not found, skipping" % fpath)
         continue
     with open(fpath, "r", encoding="utf-8") as f:
         text = f.read()
-    ext = os.path.splitext(fname)[1]
     minify = MINIFIERS.get(ext)
     if minify:
         text = minify(text)
