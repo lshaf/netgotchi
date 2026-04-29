@@ -1,5 +1,6 @@
 #include "App.h"
 #include "AppLayout.h"
+#include "../net/WebFileServer.h"
 #include "Virus.h"
 #include "Theme.h"
 #include "../core/RandomSeed.h"
@@ -17,10 +18,13 @@
 #include "command/SetCommand.h"
 #include "command/VaultCommand.h"
 #include "command/CleanEapolCommand.h"
+#include "command/WebServerCommand.h"
 
 using namespace AppLayout;
 
 static constexpr int SD_CS = 4;
+
+static WebFileServer s_webserver;
 
 NethuntCommand    s_nethunt;
 NettrapCommand    s_nettrap;
@@ -31,8 +35,9 @@ VaultCommand      s_vault;
 SetCommand        s_set;
 PowerOffCommand   s_poweroff;
 CleanEapolCommand s_cleaneapol;
+WebServerCommand  s_wsrv;
 MenuCommand*      s_rootItems[] = {
-    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_vault, &s_cleaneapol, &s_set, &s_poweroff
+    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_vault, &s_cleaneapol, &s_wsrv, &s_set, &s_poweroff
 };
 int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
@@ -101,6 +106,8 @@ void App::init() {
     s_netguard.init(&_guard);
     s_profile.init(&_stats);
     s_cleaneapol.init(&_hunter);
+    s_webserver.setActivityCallback([this](const char* msg) { _qPushOut("%s", msg); });
+    s_webserver.begin();
 
     uint32_t ms = millis();
     _cursorMs    = ms;
@@ -352,6 +359,7 @@ void App::_handleTouch(uint32_t ms) {
 void App::update() {
     M5.update();
     uint32_t ms = millis();
+
 
     if (_menuState == MenuState::PowerWait && ms - _powerOffMs >= 2000) {
         _stats.save();

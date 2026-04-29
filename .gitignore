@@ -8,3 +8,4 @@ __pycache__/
 .claude/
 .mcp.json
 build/
+src/net/WebFiles.h
