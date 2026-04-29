@@ -1,6 +1,7 @@
 #include "WebFileServer.h"
 #include "WebFiles.h"
 #include "../term/Theme.h"
+#include "../core/FastWpaCrack.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <SD.h>
@@ -314,6 +315,57 @@ void WebFileServer::_prepareRoutes() {
             const char* base = strrchr(path.c_str(), '/');
             _pushActivity("[web] write %.38s", base ? base + 1 : path.c_str());
             req->send(200, "text/plain", "Content written.");
+
+        // saveCrack
+        } else if (cmd == "saveCrack") {
+            const String pcapPath = req->hasParam("pcap", true)
+                ? req->getParam("pcap", true)->value() : "";
+            const String pw = req->hasParam("pw", true)
+                ? req->getParam("pw", true)->value() : "";
+            if (pcapPath.isEmpty() || pw.isEmpty()) {
+                req->send(400, "text/plain", "pcap and pw required.");
+                return;
+            }
+            CrackHandshake hs;
+            int reason = 0;
+            if (!fast_pcap_parse(pcapPath.c_str(), hs, &reason)) {
+                req->send(400, "text/plain", "invalid pcap");
+                return;
+            }
+            bool valid = fast_wpa2_try_password(pw.c_str(), (uint8_t)pw.length(),
+                                                hs.ssid, hs.ssid_len,
+                                                hs.prf_data, hs.eapol,
+                                                hs.eapol_len, hs.mic);
+            if (!valid) {
+                req->send(403, "text/plain", "password does not match");
+                return;
+            }
+            char bssid[13];
+            snprintf(bssid, sizeof(bssid), "%02X%02X%02X%02X%02X%02X",
+                     hs.ap[0], hs.ap[1], hs.ap[2], hs.ap[3], hs.ap[4], hs.ap[5]);
+            char savePath[80];
+            snprintf(savePath, sizeof(savePath), "/netgotchi/cracked/%.12s_%.32s.pass",
+                     bssid, hs.ssid);
+            // check existing content to decide whether to award XP
+            bool award = true;
+            if (SD.exists(savePath)) {
+                File rf = SD.open(savePath, FILE_READ);
+                if (rf) {
+                    char existing[64] = {};
+                    int n = rf.readBytes(existing, (int)pw.length() + 1);
+                    rf.close();
+                    if (n == (int)pw.length() && memcmp(existing, pw.c_str(), n) == 0)
+                        award = false;
+                }
+            }
+            SD.mkdir("/netgotchi/cracked");
+            File f = SD.open(savePath, FILE_WRITE);
+            if (!f) { req->send(500, "text/plain", "write failed"); return; }
+            f.print(pw);
+            f.close();
+            _pushActivity("[web] crack %.12s", bssid);
+            if (award && _crackSaveCb) _crackSaveCb();
+            req->send(200, "text/plain", "saved");
 
         } else {
             req->send(404, "text/plain", "command not found");

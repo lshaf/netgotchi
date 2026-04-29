@@ -12,7 +12,8 @@ public:
     using ActivityCb = std::function<void(const char*)>;
 
     void begin();
-    void setActivityCallback(ActivityCb cb) { _actCb = std::move(cb); }
+    void setActivityCallback(ActivityCb cb)             { _actCb      = std::move(cb); }
+    void setOnCrackSaved(std::function<void()> cb)      { _crackSaveCb = std::move(cb); }
 
 private:
     static constexpr int PORT         = 80;
@@ -23,7 +24,8 @@ private:
     String         _uploadTempPath;
     int            _sessionSlot = 0;
     String         _sessions[MAX_SESSIONS];
-    ActivityCb     _actCb;
+    ActivityCb             _actCb;
+    std::function<void()>  _crackSaveCb;
 
     void _pushActivity(const char* fmt, ...);
     void _prepareRoutes();

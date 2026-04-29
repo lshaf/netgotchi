@@ -1,23 +1,11 @@
 #pragma once
 #include "MenuCommand.h"
+#include "../../core/FastWpaCrack.h"
 #include <cstring>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
 #include <freertos/task.h>
-
-struct CrackHandshake {
-    char     ssid[33]     = {};
-    uint8_t  ssid_len     = 0;
-    uint8_t  ap[6]        = {};
-    uint8_t  sta[6]       = {};
-    uint8_t  anonce[32]   = {};
-    uint8_t  snonce[32]   = {};
-    uint8_t  mic[16]      = {};
-    uint8_t  eapol[300]   = {};
-    uint16_t eapol_len    = 0;
-    uint8_t  prf_data[76] = {};
-};
 
 class CrackCommand : public MenuCommand {
 public:

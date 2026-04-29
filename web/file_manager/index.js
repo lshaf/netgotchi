@@ -834,6 +834,7 @@ function _crackSetPhase(phase) {
   $(".crack-result").classList.add("hidden");
   $(".act-crack-go").classList.toggle("hidden", phase !== "dict");
   $(".act-crack-stop").classList.toggle("hidden", phase !== "run");
+  $(".act-crack-retry-save").classList.add("hidden");
 }
 
 function updateCrackProgress(tested, total, wps, eta) {
@@ -851,12 +852,32 @@ function updateCrackProgress(tested, total, wps, eta) {
   $(".crack-stats").textContent = stats;
 }
 
-function _crackDone(msg) {
+let _crackFoundPw = null;
+
+async function _saveCrack(pw) {
+  $(".act-crack-retry-save").classList.add("hidden");
+  try {
+    const fd = new FormData();
+    fd.append("command", "saveCrack");
+    fd.append("pcap", _crackFilePath);
+    fd.append("pw", pw);
+    const r = await fetch("/", { method: "POST", body: fd });
+    if (!r.ok) throw new Error(await r.text());
+    $(".crack-result").textContent += "  [saved]";
+  } catch (err) {
+    $(".crack-result").textContent += "  [save failed: " + err.message + "]";
+    $(".act-crack-retry-save").classList.remove("hidden");
+  }
+}
+
+function _crackDone(msg, pw) {
   $(".crack-result").textContent = msg;
   $(".crack-result").classList.remove("hidden");
   $(".act-crack-stop").classList.add("hidden");
   $(".act-crack-go").classList.remove("hidden");
   $(".act-crack-go").disabled = true;
+  _crackFoundPw = pw || null;
+  if (_crackFoundPw) _saveCrack(_crackFoundPw);
 }
 
 // ── Crack: builtin wordlist (mirrors CrackCommand.cpp) ───────
@@ -994,7 +1015,7 @@ async function runCrack(pcapPath) {
 
     if (hit) {
       updateCrackProgress(tested, total, 0, 0);
-      _crackDone("Found: " + pw);
+      _crackDone("Found: " + pw, pw);
       _crackRunning = false;
       return;
     }
@@ -1027,9 +1048,18 @@ $(".act-crack-go").addEventListener("click", () => {
 
 $(".act-crack-stop").addEventListener("click", () => { _crackStop = true; });
 
+$(".act-crack-retry-save").addEventListener("click", () => {
+  if (_crackFoundPw) _saveCrack(_crackFoundPw);
+});
+
 // Stop in-progress crack when dialog closes
 const _origHide = Dialog.hide.bind(Dialog);
-Dialog.hide = function () { if (_crackRunning) _crackStop = true; _origHide(); };
+Dialog.hide = function () {
+  if (_crackRunning) _crackStop = true;
+  _crackFoundPw = null;
+  $(".act-crack-retry-save").classList.add("hidden");
+  _origHide();
+};
 
 (async function () {
   try {

@@ -107,6 +107,7 @@ void App::init() {
     s_profile.init(&_stats);
     s_cleaneapol.init(&_hunter);
     s_webserver.setActivityCallback([this](const char* msg) { _qPushOut("%s", msg); });
+    s_webserver.setOnCrackSaved([this]() { onCracked(); });
     s_webserver.begin();
 
     uint32_t ms = millis();
