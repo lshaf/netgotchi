@@ -263,8 +263,8 @@ void CrackCommand::onSubSelect(IMenuHost& host, int idx) {
         return;
     }
 
-    char cmd[52];
-    snprintf(cmd, sizeof(cmd), "crack %.24s %.20s", _basename(_selPcap), dictName);
+    char cmd[56];
+    snprintf(cmd, sizeof(cmd), "crack %s %s", _basename(_selPcap), dictName);
     host.cmdPush(cmd);
 
     strncpy(_crackPcapPath, _selPcap, sizeof(_crackPcapPath) - 1);
@@ -417,10 +417,6 @@ void CrackCommand::_startCrack(IMenuHost& host) {
         return;
     }
 
-    char buf[48];
-    snprintf(buf, sizeof(buf), "target: %.32s", hs.ssid);
-    host.outPush(buf);
-
     char wlPath[64];
     strncpy(wlPath, _crackCtx.wordlistPath, sizeof(wlPath) - 1);
     wlPath[sizeof(wlPath)-1] = '\0';
@@ -451,7 +447,6 @@ void CrackCommand::_startCrack(IMenuHost& host) {
 }
 
 void CrackCommand::update(IMenuHost& host, uint32_t ms) {
-    (void)ms;
     if (_pendingStart && host.typingIdle()) {
         _pendingStart = false;
         _startCrack(host);
@@ -466,7 +461,19 @@ void CrackCommand::update(IMenuHost& host, uint32_t ms) {
     if (_crackCtx.queue)   { vQueueDelete(_crackCtx.queue);       _crackCtx.queue   = nullptr; }
     if (_crackCtx.doneSem) { vSemaphoreDelete(_crackCtx.doneSem); _crackCtx.doneSem = nullptr; }
 
-    char buf[48];
+    uint32_t elapsed_s = (ms - _crackStartMs + 500) / 1000;
+    uint32_t tried     = _crackCtx.tested;
+
+    static const char* kSep = "+----------+----------------+";
+    char buf[56];
+    char val[24];
+    auto row = [&](const char* key, const char* v) {
+        snprintf(buf, sizeof(buf), "| %-8s | %-14s |", key, v);
+        host.outPush(buf);
+    };
+
+    host.outPush(kSep);
+
     if (_crackCtx.found) {
         char savePath[80];
         char bssid[13];
@@ -476,16 +483,26 @@ void CrackCommand::update(IMenuHost& host, uint32_t ms) {
         SD.mkdir("/netgotchi/cracked");
         snprintf(savePath, sizeof(savePath), "/netgotchi/cracked/%.12s_%.32s.pass",
                  bssid, _crackCtx.hs.ssid);
+        bool isNew = !SD.exists(savePath);
         File pf = SD.open(savePath, FILE_WRITE);
         if (pf) { pf.print(_crackCtx.foundPass); pf.close(); }
-        snprintf(buf, sizeof(buf), "ssid: %.32s", _crackCtx.hs.ssid);
-        host.outPush(buf);
-        snprintf(buf, sizeof(buf), "pass: %.32s", _crackCtx.foundPass);
-        host.outPush(buf);
-    } else if (_crackCtx.stop) {
-        host.outPush("interrupted");
+        if (isNew) host.onCracked();
+        row("ssid", _crackCtx.hs.ssid);
+        row("pass", _crackCtx.foundPass);
     } else {
-        host.outPush("not found");
+        row("result", _crackCtx.stop ? "interrupted" : "not found");
     }
+
+    if (elapsed_s < 60)
+        snprintf(val, sizeof(val), "%lus", (unsigned long)elapsed_s);
+    else
+        snprintf(val, sizeof(val), "%lum%02lus",
+                 (unsigned long)(elapsed_s / 60), (unsigned long)(elapsed_s % 60));
+    row("time", val);
+
+    snprintf(val, sizeof(val), "%lu", (unsigned long)tried);
+    row("tried", val);
+
+    host.outPush(kSep);
     _crackState = CrackState::Idle;
 }

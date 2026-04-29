@@ -423,8 +423,9 @@ void WiFiHunter::_flushPendingEapol(ApInfo& ap, int idx) {
         uint16_t       len  = _pendingEapolLen[idx][i];
         if (len == 0) continue;
         _appendPcapFrame(pcap, data, len);
+        bool wasValid = ap.validated;
         _validateEapol(ap, data, len);
-        if (ap.validated) {
+        if (ap.validated && !wasValid) {
             _captureCount++;
             _buildFilePath(_lastCapturePath, sizeof(_lastCapturePath), ap);
             Serial.printf("[PCAP] Handshake captured (flushed): \"%s\" (total=%lu)\n",

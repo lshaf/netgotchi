@@ -21,10 +21,18 @@ public:
     virtual void     startNetguard() = 0;
     virtual uint32_t statsXp()         const = 0;
     virtual uint32_t statsCaptures()   const = 0;
+    virtual uint32_t statsCracked()    const = 0;
     virtual uint32_t statsLevel()      const = 0;
     virtual uint32_t statsXpProgress() const = 0;
     virtual int      statsBattery()    const = 0;
     virtual bool     statsCharging()   const = 0;
+    virtual void     onCracked()             = 0;
+    virtual uint32_t statsDeauthDiscovers() const = 0;
+    virtual uint32_t statsFloodDiscovers()  const = 0;
+    virtual uint32_t statsEvilDiscovers()   const = 0;
+    virtual void     onDeauthDiscover()           = 0;
+    virtual void     onFloodDiscover()            = 0;
+    virtual void     onEvilDiscover()             = 0;
 };
 
 class MenuCommand {

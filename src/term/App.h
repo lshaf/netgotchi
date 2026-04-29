@@ -26,10 +26,18 @@ public:
     void     startNetguard() override;
     uint32_t statsXp()         const override;
     uint32_t statsCaptures()   const override;
+    uint32_t statsCracked()    const override;
     uint32_t statsLevel()      const override;
     uint32_t statsXpProgress() const override;
     int      statsBattery()    const override;
     bool     statsCharging()   const override;
+    void     onCracked()             override;
+    uint32_t statsDeauthDiscovers() const override;
+    uint32_t statsFloodDiscovers()  const override;
+    uint32_t statsEvilDiscovers()   const override;
+    void     onDeauthDiscover()           override;
+    void     onFloodDiscover()            override;
+    void     onEvilDiscover()             override;
 
 private:
     static constexpr int LINE_COL  = 53;

@@ -14,6 +14,7 @@
 #include "command/NettrapCommand.h"
 #include "command/NetguardCommand.h"
 #include "command/SetCommand.h"
+#include "command/VaultCommand.h"
 
 #if defined(ARDUINO_M5STACK_CORES3)
     static constexpr int SD_CS = 4;
@@ -28,10 +29,11 @@ static NettrapCommand    s_nettrap;
 static NetguardCommand   s_netguard;
 static ProfileCommand    s_profile;
 static CrackCommand      s_crack;
+static VaultCommand      s_vault;
 static SetCommand        s_set;
 static PowerOffCommand   s_poweroff;
 static MenuCommand*      s_rootItems[] = {
-    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_set, &s_poweroff
+    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_vault, &s_set, &s_poweroff
 };
 static constexpr int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
@@ -140,10 +142,18 @@ void App::_stopNetguard() {
 bool     App::typingIdle()       const { return _qCount == 0 && _typeLen == 0; }
 uint32_t App::statsXp()         const { return _stats.xp(); }
 uint32_t App::statsCaptures()   const { return _stats.captures(); }
+uint32_t App::statsCracked()    const { return _stats.cracked(); }
 uint32_t App::statsLevel()      const { return _stats.level(); }
 uint32_t App::statsXpProgress() const { return _stats.xpProgress(); }
 int      App::statsBattery()    const { return _stats.battery(); }
 bool     App::statsCharging()   const { return _stats.isCharging(); }
+void     App::onCracked()             { _stats.onCrack(); _stats.save(); }
+uint32_t App::statsDeauthDiscovers() const { return _stats.deauthDiscovers(); }
+uint32_t App::statsFloodDiscovers()  const { return _stats.floodDiscovers(); }
+uint32_t App::statsEvilDiscovers()   const { return _stats.evilDiscovers(); }
+void     App::onDeauthDiscover()           { _stats.onDeauthDiscover(); _stats.save(); }
+void     App::onFloodDiscover()            { _stats.onFloodDiscover(); _stats.save(); }
+void     App::onEvilDiscover()             { _stats.onEvilDiscover(); _stats.save(); }
 
 // ── Init ──────────────────────────────────────────────────────
 
@@ -459,6 +469,7 @@ void App::_updateHunting(uint32_t ms) {
         _lastGuardDeauthCount = dc;
         const char* sid = _guard.lastDeauthSsid();
         _qPushOut("alert deauth %.32s", (sid && sid[0]) ? sid : "??");
+        onDeauthDiscover();
     }
 
     uint32_t fc = _guard.beaconFloodCount();
@@ -467,6 +478,7 @@ void App::_updateHunting(uint32_t ms) {
         if (fc > 0) {
             const char* sid = _guard.lastFloodSsid();
             _qPushOut("alert flood %.32s", (sid && sid[0]) ? sid : "??");
+            onFloodDiscover();
         }
     }
 
@@ -476,6 +488,7 @@ void App::_updateHunting(uint32_t ms) {
         if (tc > 0) {
             const char* sid = _guard.lastEvilTwinSsid();
             _qPushOut("alert twin %.32s", (sid && sid[0]) ? sid : "??");
+            onEvilDiscover();
         }
     }
 }
