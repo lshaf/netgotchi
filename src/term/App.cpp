@@ -288,8 +288,7 @@ void App::_handleTouch(uint32_t ms) {
     bool paginated     = nItems > maxVis;
     int  slotCount     = paginated ? maxVis     : nItems;
     int  itemsPerPage  = paginated ? maxVis - 2 : nItems;
-    int  firstItemSlot = paginated ? 1          : 0;
-    int  lastItemSlot  = paginated ? maxVis - 2 : slotCount - 1;
+    int  firstItemSlot = 0;
     if (paginated) {
         int maxScroll = nItems - itemsPerPage;
         if (_menuScroll < 0)         _menuScroll = 0;
@@ -323,7 +322,7 @@ void App::_handleTouch(uint32_t ms) {
 
     int sel = hitSlot;
 
-    if (paginated && sel == 0) {
+    if (paginated && sel == slotCount - 2) {
         _menuScroll -= itemsPerPage;
         if (_menuScroll < 0) _menuScroll = 0;
         return;
@@ -337,7 +336,6 @@ void App::_handleTouch(uint32_t ms) {
 
     int itemIdx = _menuScroll + (sel - firstItemSlot);
     if (itemIdx < 0 || itemIdx >= nItems) {
-        (void)lastItemSlot;
         menuClose();
         return;
     }

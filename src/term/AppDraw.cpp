@@ -155,7 +155,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
     bool paginated     = nItems > maxVis;
     int  slotCount     = paginated ? maxVis     : nItems;
     int  itemsPerPage  = paginated ? maxVis - 2 : nItems;
-    int  firstItemSlot = paginated ? 1          : 0;
+    int  firstItemSlot = 0;
     int  scroll        = _menuScroll;
     if (paginated) {
         int maxScroll = nItems - itemsPerPage;
@@ -189,7 +189,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
     };
 
     for (int slot = 0; slot < slotCount; slot++) {
-        if (paginated && slot == 0) {
+        if (paginated && slot == slotCount - 2) {
             drawNav(slot, "<< prev", scroll > 0);
             continue;
         }
