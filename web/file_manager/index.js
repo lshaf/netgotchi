@@ -526,6 +526,25 @@ window.addEventListener("keydown", async (e) => {
     }
   }
 
+  if (key === "enter" && $(".dialog-background:not(.hidden)")) {
+    const activeDialog = $(".dialog:not(.hidden)");
+    if (activeDialog && !activeDialog.classList.contains("editor")) {
+      const inputs = [...activeDialog.querySelectorAll(
+        "input:not([type=radio]):not([type=checkbox]):not([type=file])"
+      )];
+      const idx = inputs.indexOf(document.activeElement);
+      if (idx >= 0 && idx < inputs.length - 1) {
+        e.preventDefault();
+        inputs[idx + 1].focus();
+      } else {
+        const btn = activeDialog.querySelector(
+          ".btn-action:not(.act-dialog-close):not(.act-escape):not(:disabled)"
+        );
+        if (btn) { e.preventDefault(); btn.click(); }
+      }
+    }
+  }
+
   if (key === "escape" && $(".dialog-background:not(.hidden)")) {
     if ($(".dialog.editor:not(.hidden)")) {
       let editor = $(".dialog.editor .file-content");
