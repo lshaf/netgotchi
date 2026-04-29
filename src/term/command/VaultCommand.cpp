@@ -13,7 +13,7 @@ int VaultCommand::subCount() const {
 }
 
 const char* VaultCommand::subLabel(int idx) const {
-    if (idx < _fileCount) return _ssidNames[idx];
+    if (idx < _fileCount) return _fileNames[idx];
     return "back";
 }
 
@@ -64,7 +64,12 @@ void VaultCommand::_loadList() {
             int nl = (int)strlen(base);
             if (nl >= 6 && strcmp(base + nl - 5, ".pass") == 0) {
                 snprintf(_filePaths[_fileCount], 64, "/netgotchi/cracked/%s", base);
-                // filename: BSSID(12) + '_' + SSID + '.pass'
+                // filename label: base without ".pass"
+                int name_len = nl - 5;
+                if (name_len > 51) name_len = 51;
+                memcpy(_fileNames[_fileCount], base, name_len);
+                _fileNames[_fileCount][name_len] = '\0';
+                // ssid: skip BSSID(12) + '_'
                 const char* ssid = (nl > 13 && base[12] == '_') ? base + 13 : base;
                 int ssid_len = (int)strlen(ssid) - 5; // strip ".pass"
                 if (ssid_len > 32) ssid_len = 32;

@@ -17,6 +17,7 @@ private:
     static constexpr int MAX_FILES = 10;
 
     char _filePaths[MAX_FILES][64] = {};
+    char _fileNames[MAX_FILES][52] = {};
     char _ssidNames[MAX_FILES][33] = {};
     int  _fileCount = 0;
 
