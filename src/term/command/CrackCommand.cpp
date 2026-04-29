@@ -345,10 +345,21 @@ void CrackCommand::update(IMenuHost& host, uint32_t ms) {
         SD.mkdir("/netgotchi/cracked");
         snprintf(savePath, sizeof(savePath), "/netgotchi/cracked/%.12s_%.32s.pass",
                  bssid, _crackCtx.hs.ssid);
-        bool isNew = !SD.exists(savePath);
+        bool award = true;
+        if (SD.exists(savePath)) {
+            File rf = SD.open(savePath, FILE_READ);
+            if (rf) {
+                char existing[64] = {};
+                int n = rf.readBytes(existing, (int)strlen(_crackCtx.foundPass) + 1);
+                rf.close();
+                if (n == (int)strlen(_crackCtx.foundPass) &&
+                    memcmp(existing, _crackCtx.foundPass, n) == 0)
+                    award = false;
+            }
+        }
         File pf = SD.open(savePath, FILE_WRITE);
         if (pf) { pf.print(_crackCtx.foundPass); pf.close(); }
-        if (isNew) host.onCracked();
+        if (award) host.onCracked();
         row("ssid", _crackCtx.hs.ssid);
         row("pass", _crackCtx.foundPass);
     } else {
