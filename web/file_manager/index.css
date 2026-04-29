@@ -437,3 +437,55 @@ svg > g, svg > path {
     transform: rotate(360deg);
   }
 }
+/* ── Crack button ─────────────────────────────────────────── */
+.table .col-action .act-crack { display: none; }
+.table .col-action.type-pcap .act-crack { display: inline-block; }
+/* ── Crack dialog ────────────────────────────────────────── */
+.crack-dict-label { margin-bottom: 4px; font-size: 11px; color: var(--dim); }
+.crack-dict-list {
+    max-height: 120px;
+    overflow-y: auto;
+    border: 1px solid var(--dim);
+    margin-bottom: 6px;
+}
+.crack-dict-list label {
+    display: flex;
+    align-items: center;
+    padding: 3px 6px;
+    cursor: pointer;
+    gap: 6px;
+}
+.crack-dict-list label:hover { background-color: var(--pale); }
+.crack-dict-list input[type=radio] {
+    display: inline;
+    width: auto;
+    min-width: unset;
+    margin: 0;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+.crack-phase-run { margin-top: 2px; }
+.crack-bar-wrap {
+    height: 16px;
+    border: 1px solid var(--dim);
+    position: relative;
+    margin-bottom: 4px;
+    overflow: hidden;
+}
+.crack-bar {
+    background-color: var(--pale);
+    height: 100%;
+    width: 0%;
+    position: absolute;
+    top: 0; left: 0;
+}
+.crack-bar-pct {
+    position: absolute;
+    width: 100%;
+    text-align: center;
+    line-height: 16px;
+    font-size: 11px;
+}
+.crack-stats { font-size: 11px; color: var(--dim); margin-bottom: 2px; }
+.crack-result { padding-top: 6px; font-weight: bold; }
+.no-dict-msg { color: var(--dim); font-size: 11px; padding: 4px; display: block; }
