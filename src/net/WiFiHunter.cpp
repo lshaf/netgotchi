@@ -269,8 +269,6 @@ void WiFiHunter::_processBeacon(const RawFrame& f) {
         if (!ap) return;
         ap->channel = f.channel;
         wasNew = true;
-    } else {
-        ap->channel = f.channel;
     }
 
     int idx = (int)(ap - _aps);
