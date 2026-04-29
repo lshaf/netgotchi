@@ -57,9 +57,9 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
     if (ram > 100) ram = 100;
     if (ram < 0)   ram = 0;
 
-    const int stripW = CELL_RIGHT - MARGIN;
+    const int stripW = CELL_RIGHT - BAR_LEFT;
     const int eachW  = (stripW - BAR_GAP) / 2;
-    const int batX   = MARGIN;
+    const int batX   = BAR_LEFT;
     const int ramX   = batX + eachW + BAR_GAP;
 
     char buf[16];
@@ -70,9 +70,20 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
     drawValueBar(c, ramX, BAR1_Y, eachW, BAR_H, "RAM", buf, ram);
 
     snprintf(buf, sizeof(buf), "LV%lu", (unsigned long)_stats.level());
-    drawValueBar(c, MARGIN, BAR2_Y, stripW, BAR_H, "EXP", buf, (int)_stats.xpProgress());
+    drawValueBar(c, BAR_LEFT, BAR2_Y, stripW, BAR_H, "EXP", buf, (int)_stats.xpProgress());
 
     c.drawFastHLine(0, HEADER_DIVIDER_Y, SCR_W, Theme::DIM);
+
+    // Display-off icon — top-left, same 32×32 footprint as mascot
+    {
+        const int cx = DISP_BTN_X + DISP_BTN_W / 2;   // 20
+        const int cy = DISP_BTN_Y + DISP_BTN_H / 2;   // 20
+        c.fillRect(DISP_BTN_X, DISP_BTN_Y, DISP_BTN_W, DISP_BTN_H, Theme::BG);
+        // Thick arc with ~70° gap at top (M5GFX: 0°=right, so top=270°; 305°→235°)
+        c.drawArc(cx, cy, 11, 9, 305, 235, Theme::FG);
+        // Vertical stem through the gap (3px wide)
+        c.fillRect(cx - 1, cy - 13, 3, 11, Theme::FG);
+    }
 
     Virus::State vs = _currentService ? _currentService->virusState() : Virus::State::Idle;
     Virus::draw(c, ms, vs);

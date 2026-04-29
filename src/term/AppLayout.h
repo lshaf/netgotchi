@@ -15,6 +15,11 @@ namespace AppLayout {
     constexpr int BAR1_Y           = HEAD_TOP_PAD;
     constexpr int BAR2_Y           = BAR1_Y + BAR_H + BAR_GAP;
     constexpr int HEAD_H           = BAR2_Y + BAR_H + HEAD_BOT_PAD;
+    constexpr int DISP_BTN_X = MARGIN;                              // 4
+    constexpr int DISP_BTN_Y = Virus::Y0;                           // 4 — matches mascot Y
+    constexpr int DISP_BTN_W = Virus::SIDE;                        // 32 — same as mascot
+    constexpr int DISP_BTN_H = Virus::SIDE;                        // 32 — same as mascot
+    constexpr int BAR_LEFT   = DISP_BTN_X + DISP_BTN_W + MARGIN;  // 40
     constexpr int CELL_RIGHT       = Virus::X0 - MARGIN;
 
     constexpr int HEADER_DIVIDER_Y = HEAD_H;

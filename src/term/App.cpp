@@ -242,13 +242,16 @@ void App::_updateTyping(uint32_t ms) {
 void App::_handleTouch(uint32_t ms) {
     auto t = M5.Touch.getDetail();
 
+    // Reset idle timer on any touch activity
     if (t.isPressed() || t.wasPressed() || t.wasReleased()) {
         _lastTouchMs = ms;
-        if (_displayOff) {
-            M5.Display.setBrightness(Theme::brightness());
-            _displayOff = false;
-            return;
-        }
+    }
+
+    // Wake display only on a fresh tap — not on the ongoing press that turned it off
+    if (t.wasPressed() && _displayOff) {
+        M5.Display.setBrightness(Theme::brightness());
+        _displayOff = false;
+        return;
     }
 
     if (_menuState == MenuState::PowerWait) return;
@@ -256,6 +259,14 @@ void App::_handleTouch(uint32_t ms) {
     bool pressed  = t.isPressed();
     bool released = t.wasReleased();
     int  tx = t.x, ty = t.y;
+
+    // Display-off icon tap
+    if (t.wasPressed() && tx >= DISP_BTN_X && tx < DISP_BTN_X + DISP_BTN_W
+            && ty >= DISP_BTN_Y && ty < DISP_BTN_Y + DISP_BTN_H) {
+        M5.Display.setBrightness(0);
+        _displayOff = true;
+        return;
+    }
 
     if (_menuState == MenuState::Closed) {
         if (t.wasPressed() && tx >= Virus::X0 && ty >= 0 && ty < HEADER_DIVIDER_Y) {
@@ -366,7 +377,6 @@ void App::update() {
     M5.update();
     uint32_t ms = millis();
 
-
     if (_menuState == MenuState::PowerWait && ms - _powerOffMs >= 2000) {
         _stats.save();
         M5.Display.fillScreen(0);
@@ -382,16 +392,6 @@ void App::update() {
         }
     }
 
-    if (M5.BtnA.wasPressed()) {
-        if (_displayOff) {
-            M5.Display.setBrightness(Theme::brightness());
-            _displayOff = false;
-            _lastTouchMs = ms;
-        } else {
-            M5.Display.setBrightness(0);
-            _displayOff = true;
-        }
-    }
 
     _handleTouch(ms);
     if (_currentService)
