@@ -11,7 +11,9 @@ public:
         WaitChannel,
         CheckChannel,
         Deauthing,
+        PostDeauth,
         NextWifi,
+        Exhaust,
     };
 
     const char* label() const override { return "nethunt"; }
@@ -25,7 +27,9 @@ public:
     void stopService(IMenuHost& host) override;
     void update(IMenuHost& host, uint32_t ms) override;
     void clearState() override;
-    Virus::State virusState() const override { return Virus::State::Active; }
+    Virus::State virusState() const override {
+        return (_huntPhase == HuntPhase::Exhaust) ? Virus::State::Sleep : Virus::State::Active;
+    }
 
 private:
     WiFiHunter* _hunter = nullptr;
