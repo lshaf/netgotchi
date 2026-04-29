@@ -2,15 +2,13 @@
 #include "AppLayout.h"
 #include "Virus.h"
 #include "Theme.h"
-#include "command/CrackCommand.h"
 #include <M5Unified.h>
 #include <esp_heap_caps.h>
 
 using namespace AppLayout;
 
-extern CrackCommand s_crack;
-extern MenuCommand* s_rootItems[];
-extern int          ROOT_N;
+extern MenuCommand*  s_rootItems[];
+extern int           ROOT_N;
 
 // ── Header bar ────────────────────────────────────────────────
 
@@ -76,13 +74,7 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
 
     c.drawFastHLine(0, HEADER_DIVIDER_Y, SCR_W, Theme::DIM);
 
-    Virus::State vs;
-    if      (s_crack.isRunning())                              vs = Virus::State::Decrypting;
-    else if (_nethuntRunning && _exhaustPhase != 0)            vs = Virus::State::Sleep;
-    else if (_nethuntRunning)                                  vs = Virus::State::Active;
-    else if (_nettrapRunning)                                  vs = Virus::State::Trap;
-    else if (_netguardRunning)                                 vs = Virus::State::Guard;
-    else                                                       vs = Virus::State::Idle;
+    Virus::State vs = _currentService ? _currentService->virusState() : Virus::State::Idle;
     Virus::draw(c, ms, vs);
 }
 
@@ -96,40 +88,15 @@ void App::_drawLog(M5Canvas& c) const {
     c.setTextColor(Theme::FG, Theme::BG);
     c.setTextDatum(lgfx::top_left);
 
-    const int maxVis    = (LOG_BOT - LOG_TOP) / LINE_H;
-    const bool cracking = s_crack.isRunning();
-    int        scrollSlot = 0;
+    const int maxVis  = (LOG_BOT - LOG_TOP) / LINE_H;
+    int       scrollSlot = 0;
 
-    if (cracking) {
-        uint32_t pct = (s_crack.fileSize() > 0)
-            ? (uint32_t)((uint64_t)s_crack.bytesDone() * 100 / s_crack.fileSize())
-            : 0;
-        if (pct > 100) pct = 100;
-        char bar[21]; int filled = (int)(20 * pct / 100);
-        for (int i = 0; i < 20; i++) bar[i] = (i < filled) ? '#' : ' ';
-        bar[20] = '\0';
-
-        char speedBuf[10] = "";
-        char etaBuf[10]   = "";
-        uint32_t elapsed_s = (millis() - s_crack.startMs() + 500) / 1000;
-        if (elapsed_s > 0) {
-            uint32_t wps = s_crack.tested() / elapsed_s;
-            if (wps >= 1000) snprintf(speedBuf, sizeof(speedBuf), " %luk/s", (unsigned long)(wps / 1000));
-            else             snprintf(speedBuf, sizeof(speedBuf), " %lu/s",  (unsigned long)wps);
-
-            uint32_t bps = (s_crack.bytesDone() > 0) ? s_crack.bytesDone() / elapsed_s : 0;
-            if (bps > 0 && s_crack.fileSize() > s_crack.bytesDone()) {
-                uint32_t eta = (s_crack.fileSize() - s_crack.bytesDone()) / bps;
-                if (eta < 60) snprintf(etaBuf, sizeof(etaBuf), " %lus",      (unsigned long)eta);
-                else          snprintf(etaBuf, sizeof(etaBuf), " %lum%02lus", (unsigned long)(eta / 60), (unsigned long)(eta % 60));
-            }
-        }
-
+    if (_currentService) {
         char buf[LINE_COL];
-        snprintf(buf, sizeof(buf), "[%s] %lu%%%s%s", bar, (unsigned long)pct, speedBuf, etaBuf);
-        int y = LOG_BOT - LINE_H + 1;
-        c.drawString(buf, MARGIN, y);
-        scrollSlot = 1;
+        if (_currentService->progressLine(buf, LINE_COL, millis())) {
+            c.drawString(buf, MARGIN, LOG_BOT - LINE_H + 1);
+            scrollSlot = 1;
+        }
     }
 
     for (int i = 0; i + scrollSlot < maxVis && i < LOG_LINES; i++) {
@@ -177,7 +144,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
 
     int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
-        nItems = (_nethuntRunning || _nettrapRunning || _netguardRunning || s_crack.isRunning()) ? 1 : ROOT_N;
+        nItems = _currentService ? 1 : ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
@@ -236,7 +203,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
         if (itemIdx < 0 || itemIdx >= nItems) continue;
 
         if (_menuState == MenuState::Root) {
-            const bool locked = _nethuntRunning || _nettrapRunning || _netguardRunning || s_crack.isRunning();
+            const bool locked = _currentService != nullptr;
             const char* lbl = locked ? "stop" : s_rootItems[itemIdx]->label();
             drawItem(slot, lbl, true);
         } else if (_menuState == MenuState::Sub && _activeSubCmd) {

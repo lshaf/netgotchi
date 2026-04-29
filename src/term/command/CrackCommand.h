@@ -31,13 +31,16 @@ public:
     const char* inputHint()          const override;
     void        onSubSelect(IMenuHost& host, int idx) override;
 
-    bool     isRunning()  const { return _crackState == CrackState::Running; }
+    void         stopService(IMenuHost& host)                        override { (void)host; stop(); }
+    bool         isRunning()                                   const { return _crackState == CrackState::Running; }
+    Virus::State virusState()                                  const override { return Virus::State::Decrypting; }
+    bool         progressLine(char* buf, int len, uint32_t ms) const override;
     uint32_t tested()     const { return _crackCtx.tested; }
     uint32_t bytesDone()  const { return _crackCtx.bytesDone; }
     uint32_t fileSize()   const { return _crackCtx.fileSize; }
     uint32_t startMs()    const { return _crackStartMs; }
 
-    void update(IMenuHost& host, uint32_t ms);
+    void update(IMenuHost& host, uint32_t ms) override;
     void stop();
 
 private:

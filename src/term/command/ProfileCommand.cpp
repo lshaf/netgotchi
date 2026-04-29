@@ -20,29 +20,23 @@ void ProfileCommand::execute(IMenuHost& host) {
     host.outPush(kSep);
 
     snprintf(val, sizeof(val), "%d%%%s",
-             host.statsBattery(), host.statsCharging() ? " chg" : "");
+             _stats->battery(), _stats->isCharging() ? " chg" : "");
     rowPush(host, "batt", val);
 
-    snprintf(val, sizeof(val), "%lu", (unsigned long)host.statsLevel());
+    snprintf(val, sizeof(val), "%lu", (unsigned long)_stats->level());
     rowPush(host, "lv", val);
 
-    snprintf(val, sizeof(val), "%lu/100", (unsigned long)host.statsXpProgress());
+    snprintf(val, sizeof(val), "%lu/100", (unsigned long)_stats->xpProgress());
     rowPush(host, "xp", val);
 
-    snprintf(val, sizeof(val), "%lu", (unsigned long)host.statsCaptures());
+    snprintf(val, sizeof(val), "%lu", (unsigned long)_stats->captures());
     rowPush(host, "captured", val);
 
-    snprintf(val, sizeof(val), "%lu", (unsigned long)host.statsCracked());
+    snprintf(val, sizeof(val), "%lu", (unsigned long)_stats->cracked());
     rowPush(host, "cracked", val);
 
-    snprintf(val, sizeof(val), "%lu", (unsigned long)host.statsDeauthDiscovers());
-    rowPush(host, "deauth", val);
-
-    snprintf(val, sizeof(val), "%lu", (unsigned long)host.statsFloodDiscovers());
-    rowPush(host, "flood", val);
-
-    snprintf(val, sizeof(val), "%lu", (unsigned long)host.statsEvilDiscovers());
-    rowPush(host, "evil", val);
+    snprintf(val, sizeof(val), "%lu", (unsigned long)_stats->discovers());
+    rowPush(host, "threats", val);
 
     uint32_t fH = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL)
                 + (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);

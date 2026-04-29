@@ -24,7 +24,7 @@ void WifiGuard::init() {
     esp_wifi_set_promiscuous(true);
     esp_wifi_set_channel(_channel, WIFI_SECOND_CHAN_NONE);
 
-    Serial.println("[GUARD] Started");
+
 }
 
 void WifiGuard::update(uint32_t ms) {
@@ -103,9 +103,6 @@ void WifiGuard::_flush() {
                              "%02X:%02X:%02X", ev.bssid[0], ev.bssid[1], ev.bssid[2]);
                 }
                 _lastDeauthSsid[32] = '\0';
-                Serial.printf("[GUARD] %s from %02X:%02X:%02X ssid=\"%s\"\n",
-                              ev.isDisassoc ? "Disassoc" : "Deauth",
-                              ev.bssid[0], ev.bssid[1], ev.bssid[2], ap->ssid);
             }
         }
         _dTail = (_dTail + 1) % DEAUTH_RING;
@@ -137,7 +134,6 @@ void WifiGuard::_updateRates() {
                 ap.floodAlerted = true;
                 strncpy(_lastFloodSsid, ap.ssid[0] ? ap.ssid : "??", 32);
                 _lastFloodSsid[32] = '\0';
-                Serial.printf("[GUARD] Beacon flood \"%s\" %d/s\n", ap.ssid, ap.beaconRate);
             }
         } else {
             ap.floodAlerted = false;
@@ -156,7 +152,6 @@ void WifiGuard::_checkEvilTwins() {
                 _evilTwinCount++;
                 strncpy(_lastEvilTwinSsid, _aps[i].ssid, 32);
                 _lastEvilTwinSsid[32] = '\0';
-                Serial.printf("[GUARD] Evil twin \"%s\"\n", _aps[i].ssid);
             }
         }
     }

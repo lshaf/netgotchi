@@ -1,5 +1,6 @@
 #pragma once
 #include <cstdint>
+#include "../Virus.h"
 
 class MenuCommand;
 
@@ -15,24 +16,13 @@ public:
     virtual void setPendingBrightness(uint8_t val255) = 0;
     virtual void setPendingDisplayOff(uint16_t secs) = 0;
     virtual void setPendingPowerOff() = 0;
-    virtual bool     typingIdle()    const = 0;
-    virtual void     startNethunt()  = 0;
-    virtual void     startNettrap()  = 0;
-    virtual void     startNetguard() = 0;
-    virtual uint32_t statsXp()         const = 0;
-    virtual uint32_t statsCaptures()   const = 0;
-    virtual uint32_t statsCracked()    const = 0;
-    virtual uint32_t statsLevel()      const = 0;
-    virtual uint32_t statsXpProgress() const = 0;
-    virtual int      statsBattery()    const = 0;
-    virtual bool     statsCharging()   const = 0;
-    virtual void     onCracked()             = 0;
-    virtual uint32_t statsDeauthDiscovers() const = 0;
-    virtual uint32_t statsFloodDiscovers()  const = 0;
-    virtual uint32_t statsEvilDiscovers()   const = 0;
-    virtual void     onDeauthDiscover()           = 0;
-    virtual void     onFloodDiscover()            = 0;
-    virtual void     onEvilDiscover()             = 0;
+    virtual bool     typingIdle()      const = 0;
+    virtual bool     menuIsOpen()      const = 0;
+    virtual void startService(MenuCommand* cmd)      = 0;
+    virtual void setCurrentService(MenuCommand* cmd) = 0;
+    virtual void onCapture()  = 0;
+    virtual void onCracked()  = 0;
+    virtual void onDiscover() = 0;
 };
 
 class MenuCommand {
@@ -40,6 +30,14 @@ public:
     virtual ~MenuCommand() = default;
     virtual const char* label() const = 0;
     virtual void execute(IMenuHost& host) = 0;
+
+    // Service commands override these
+    virtual void         startHardware()                          {}
+    virtual void         stopService(IMenuHost& host)             { (void)host; }
+    virtual void         update(IMenuHost&, uint32_t)             {}
+    virtual void         clearState()                             {}
+    virtual Virus::State virusState()                        const { return Virus::State::Idle; }
+    virtual bool         progressLine(char*, int, uint32_t)  const { return false; }
 
     // Sub-menu interface — only overridden by commands that have a sub-menu
     virtual int         subCount()              const { return 0; }

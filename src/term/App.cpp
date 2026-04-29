@@ -19,13 +19,7 @@
 
 using namespace AppLayout;
 
-#if defined(ARDUINO_M5STACK_CORES3)
-    static constexpr int SD_CS = 4;
-#elif defined(ARDUINO_M5STACK_CARDPUTER)
-    static constexpr int SD_CS = 12;
-#else
-    static constexpr int SD_CS = 4;
-#endif
+static constexpr int SD_CS = 4;
 
 NethuntCommand    s_nethunt;
 NettrapCommand    s_nettrap;
@@ -52,79 +46,34 @@ void App::setPendingBrightness(uint8_t v)      { _pendingBright     = (int)v; }
 void App::setPendingDisplayOff(uint16_t secs)  { _pendingDisplayOff = (int)secs; }
 void App::setPendingPowerOff()                 { _pendingPowerOff   = true; }
 
-void App::startNethunt() {
-    _guard.pause();
-    _hunter.setTrapMode(false);
-    _hunter.resume();
-    _nethuntRunning = true;
-    _qPushCmd("service nethunt start");
-    menuClose();
-}
-void App::_stopNethunt() {
-    _hunter.pause();
-    _nethuntRunning = false;
-    _exhaustPhase   = 0;
-    _qPushCmd("service nethunt stop");
-    menuClose();
-}
-void App::startNettrap() {
-    _guard.pause();
-    _hunter.setTrapMode(true);
-    _hunter.resume();
-    _nettrapRunning = true;
-    _qPushCmd("service nettrap start");
-    menuClose();
-}
-void App::_stopNettrap() {
-    _hunter.pause();
-    _hunter.setTrapMode(false);
-    _nettrapRunning = false;
-    _qPushCmd("service nettrap stop");
-    menuClose();
-}
-void App::startNetguard() {
-    _hunter.pause();
-    _guard.init();
-    _netguardRunning = true;
-    _lastGuardDeauthCount = 0;
-    _lastBeaconFloodCount = 0;
-    _lastEvilTwinCount    = 0;
-    _qPushCmd("service netguard start");
-    menuClose();
-}
-void App::_stopNetguard() {
-    _guard.pause();
-    _netguardRunning = false;
-    _qPushCmd("service netguard stop");
+void App::_stopCurrentService() {
+    if (!_currentService) return;
+    _currentService->stopService(*this);
+    _currentService->clearState();
+    _currentService = nullptr;
     menuClose();
 }
 
-bool     App::typingIdle()            const { return _qCount == 0 && _typeLen == 0; }
-uint32_t App::statsXp()              const { return _stats.xp(); }
-uint32_t App::statsCaptures()        const { return _stats.captures(); }
-uint32_t App::statsCracked()         const { return _stats.cracked(); }
-uint32_t App::statsLevel()           const { return _stats.level(); }
-uint32_t App::statsXpProgress()      const { return _stats.xpProgress(); }
-int      App::statsBattery()         const { return _stats.battery(); }
-bool     App::statsCharging()        const { return _stats.isCharging(); }
-void     App::onCracked()                  { _stats.onCrack(); _stats.save(); }
-uint32_t App::statsDeauthDiscovers() const { return _stats.deauthDiscovers(); }
-uint32_t App::statsFloodDiscovers()  const { return _stats.floodDiscovers(); }
-uint32_t App::statsEvilDiscovers()   const { return _stats.evilDiscovers(); }
-void     App::onDeauthDiscover()           { _stats.onDeauthDiscover(); _stats.save(); }
-void     App::onFloodDiscover()            { _stats.onFloodDiscover(); _stats.save(); }
-void     App::onEvilDiscover()             { _stats.onEvilDiscover(); _stats.save(); }
+void App::startService(MenuCommand* cmd) {
+    cmd->startHardware();
+    _currentService = cmd;
+    _currentService->clearState();
+    menuClose();
+}
+
+bool App::typingIdle() const { return _qCount == 0 && _typeLen == 0; }
+bool App::menuIsOpen() const { return _menuState != MenuState::Closed; }
+void App::onCapture()        { _stats.onCapture();  _stats.save(); }
+void App::onCracked()        { _stats.onCrack();    _stats.save(); }
+void App::onDiscover()       { _stats.onDiscover(); _stats.save(); }
+void App::setCurrentService(MenuCommand* cmd) { _currentService = cmd; }
 
 // ── Init ──────────────────────────────────────────────────────
 
 void App::init() {
-    Serial.begin(115200);
     RandomSeed::init();
 
-    if (psramFound()) {
-        psramInit();
-        Serial.printf("[INIT] PSRAM %uKB free\n", ESP.getFreePsram() / 1024);
-    }
+    if (psramFound()) psramInit();
 
     auto cfg = M5.config();
     M5.begin(cfg);
@@ -136,18 +85,19 @@ void App::init() {
 
     bool sdOk = SD.begin(SD_CS);
     if (sdOk) {
-        Serial.printf("[SD] OK  %lluMB total\n", SD.totalBytes() / (1024 * 1024));
         SD.mkdir("/netgotchi");
         SD.mkdir("/netgotchi/eapol");
         SD.mkdir("/netgotchi/dictionaries");
-    } else {
-        Serial.println("[SD] Mount failed — captures won't be saved");
     }
 
     _stats.load();
     Theme::load();
     _hunter.init();
     _hunter.pause();
+    s_nethunt.init(&_hunter);
+    s_nettrap.init(&_hunter);
+    s_netguard.init(&_guard);
+    s_profile.init(&_stats);
 
     uint32_t ms = millis();
     _cursorMs    = ms;
@@ -155,14 +105,14 @@ void App::init() {
     _lastTouchMs = ms;
 
     _qPushCmd("boot netgotchi");
-    _qPushOut("net_gotchi term v0.1");
+    _qPushOut("net_gotchi term v1.0");
     _qPushOut("psram %ukb free", (unsigned)(ESP.getFreePsram() / 1024));
     if (sdOk) _qPushOut("sd ok %llumb", SD.totalBytes() / (1024 * 1024));
     else      _qPushOut("sd: mount failed");
     _qPushOut("wifi ready.");
     _qPushOut("ready.");
 
-    Serial.println("[INIT] Term boot complete");
+
 }
 
 // ── Log ring ──────────────────────────────────────────────────
@@ -276,170 +226,6 @@ void App::_updateTyping(uint32_t ms) {
     }
 }
 
-// ── Hunting integration ───────────────────────────────────────
-
-void App::_updateHunting(uint32_t ms) {
-    if (!_nethuntRunning && !_nettrapRunning && !_netguardRunning) return;
-    if (s_crack.isRunning()) return;
-    if (ms - _statusLogMs >= 10000) {
-        _statusLogMs = ms;
-        uint8_t ch = (_nethuntRunning || _nettrapRunning) ? _hunter.channel() : _guard.channel();
-        const char* modeStr = _nethuntRunning ? "hunt" : (_nettrapRunning ? "trap" : "guard");
-        Serial.printf("[STATUS] mode=%s ch=%d bat=%d%% caps=%lu xp=%lu\n",
-                      modeStr, ch, M5.Power.getBatteryLevel(),
-                      (unsigned long)_stats.captures(), (unsigned long)_stats.xp());
-    }
-
-    if (_menuState != MenuState::Closed) return;
-
-    if (_nethuntRunning) {
-        if (_exhaustPhase == 1) {
-            if (ms < _pauseUntilMs) return;
-            _qPushCmd("service nethunt start");
-            _pauseUntilMs = ms + 5000;
-            _exhaustPhase = 2;
-            return;
-        }
-        if (_exhaustPhase == 2) {
-            if (ms < _pauseUntilMs) return;
-            _qPushCmd("setchannel 1");
-            _exhaustPhase = 0;
-        }
-
-        _hunter.update(ms);
-
-        uint8_t ch = _hunter.channel();
-        if (ch != _lastChannel) {
-            if (_lastChannel == 13 && ch == 1) {
-                _hunter.clearFindings(ms);
-                _lastApFoundCount      = 0;
-                _lastDeauthTargetCount = 0;
-                _lastEapolEventCount   = 0;
-                _lastCaptureCount      = 0;
-                _lastChannel = ch;
-                _qPushCmd("service nethunt exhaust 60");
-                _pauseUntilMs = ms + 60000;
-                _exhaustPhase = 1;
-                return;
-            }
-            _lastChannel = ch;
-            _qPushCmd("setchannel %d", ch);
-        }
-
-        uint32_t afc = _hunter.apFoundCount();
-        if (afc > _lastApFoundCount) {
-            _lastApFoundCount = afc;
-            const char* ssid = _hunter.lastFoundSsid();
-            _qPushOut("detected %.32s", (ssid && ssid[0]) ? ssid : "<hidden>");
-        }
-
-        uint32_t dtc = _hunter.deauthTargetCount();
-        if (dtc > _lastDeauthTargetCount) {
-            _lastDeauthTargetCount = dtc;
-            const char* dsid = _hunter.lastDeauthSsid();
-            _qPushCmd("deauth %.32s", (dsid && dsid[0]) ? dsid : "??");
-        }
-
-        uint32_t eec = _hunter.eapolEventCount();
-        if (eec > _lastEapolEventCount) {
-            _lastEapolEventCount = eec;
-            int msg = _hunter.lastEapolMsg();
-            const char* esid = _hunter.lastEapolSsid();
-            _qPushOut("traced eapol M%d %.32s", msg, (esid && esid[0]) ? esid : "??");
-        }
-
-        uint32_t edc = _hunter.externalDeauthCount();
-        if (edc > _lastExternalDeauthCount) {
-            _lastExternalDeauthCount = edc;
-            const char* eid = _hunter.lastExternalDeauthSsid();
-            _qPushOut("alert deauth %.32s", (eid && eid[0]) ? eid : "??");
-        }
-
-        uint32_t caps = _hunter.captureCount();
-        if (caps > _lastCaptureCount) {
-            _lastCaptureCount = caps;
-            const char* path  = _hunter.lastCapturePath();
-            const char* fname = strrchr(path, '/');
-            fname = fname ? fname + 1 : path;
-            _stats.onCapture();
-            _stats.save();
-            uint16_t r1 = 0x1000 + (uint16_t)(rand() & 0xCFFF);
-            uint16_t r2 = r1 + (uint16_t)(rand() & 0x0FFF) + 0x100;
-            _qPushCmd("dump 0x%04x..0x%04x >> %.27s", r1, r2, fname);
-        }
-        return;
-    }
-
-    if (_nettrapRunning) {
-        _hunter.update(ms);
-
-        uint8_t ch = _hunter.channel();
-        if (ch != _lastChannel) {
-            _lastChannel = ch;
-            _qPushCmd("setchannel %d", ch);
-        }
-
-        uint32_t afc = _hunter.apFoundCount();
-        if (afc > _lastApFoundCount) {
-            _lastApFoundCount = afc;
-            const char* ssid = _hunter.lastFoundSsid();
-            _qPushOut("detected %.32s", (ssid && ssid[0]) ? ssid : "<hidden>");
-        }
-
-        uint32_t eec = _hunter.eapolEventCount();
-        if (eec > _lastEapolEventCount) {
-            _lastEapolEventCount = eec;
-            int msg = _hunter.lastEapolMsg();
-            const char* esid = _hunter.lastEapolSsid();
-            _qPushOut("traced eapol M%d %.32s", msg, (esid && esid[0]) ? esid : "??");
-        }
-
-        uint32_t caps = _hunter.captureCount();
-        if (caps > _lastCaptureCount) {
-            _lastCaptureCount = caps;
-            const char* path  = _hunter.lastCapturePath();
-            const char* fname = strrchr(path, '/');
-            fname = fname ? fname + 1 : path;
-            _stats.onCapture();
-            _stats.save();
-            uint16_t r1 = 0x1000 + (uint16_t)(rand() & 0xCFFF);
-            uint16_t r2 = r1 + (uint16_t)(rand() & 0x0FFF) + 0x100;
-            _qPushCmd("dump 0x%04x..0x%04x >> %.27s", r1, r2, fname);
-        }
-        return;
-    }
-
-    _guard.update(ms);
-
-    uint32_t dc = _guard.deauthCount();
-    if (dc > _lastGuardDeauthCount) {
-        _lastGuardDeauthCount = dc;
-        const char* sid = _guard.lastDeauthSsid();
-        _qPushOut("alert deauth %.32s", (sid && sid[0]) ? sid : "??");
-        onDeauthDiscover();
-    }
-
-    uint32_t fc = _guard.beaconFloodCount();
-    if (fc != _lastBeaconFloodCount) {
-        _lastBeaconFloodCount = fc;
-        if (fc > 0) {
-            const char* sid = _guard.lastFloodSsid();
-            _qPushOut("alert flood %.32s", (sid && sid[0]) ? sid : "??");
-            onFloodDiscover();
-        }
-    }
-
-    uint32_t tc = _guard.evilTwinCount();
-    if (tc != _lastEvilTwinCount) {
-        _lastEvilTwinCount = tc;
-        if (tc > 0) {
-            const char* sid = _guard.lastEvilTwinSsid();
-            _qPushOut("alert twin %.32s", (sid && sid[0]) ? sid : "??");
-            onEvilDiscover();
-        }
-    }
-}
-
 // ── Touch handling ────────────────────────────────────────────
 
 void App::_handleTouch(uint32_t ms) {
@@ -476,7 +262,7 @@ void App::_handleTouch(uint32_t ms) {
 
     int nItems = 0, itemH = MENU_ITEM_H;
     if (_menuState == MenuState::Root) {
-        nItems = (_nethuntRunning || _nettrapRunning || _netguardRunning || s_crack.isRunning()) ? 1 : ROOT_N;
+        nItems = _currentService ? 1 : ROOT_N;
     } else if (_menuState == MenuState::Sub && _activeSubCmd) {
         nItems = _activeSubCmd->subCount();
         itemH  = _activeSubCmd->subItemH();
@@ -547,10 +333,7 @@ void App::_handleTouch(uint32_t ms) {
     }
 
     if (_menuState == MenuState::Root) {
-        if (_nethuntRunning)         { _stopNethunt();              return; }
-        if (_nettrapRunning)         { _stopNettrap();              return; }
-        if (_netguardRunning)        { _stopNetguard();             return; }
-        if (s_crack.isRunning())     { s_crack.stop(); menuClose(); return; }
+        if (_currentService) { _stopCurrentService(); return; }
         s_rootItems[itemIdx]->execute(*this);
         return;
     }
@@ -583,8 +366,8 @@ void App::update() {
     }
 
     _handleTouch(ms);
-    s_crack.update(*this, ms);
-    _updateHunting(ms);
+    if (_currentService)
+        _currentService->update(*this, ms);
     _updateTyping(ms);
 
     if (!_displayOff) {

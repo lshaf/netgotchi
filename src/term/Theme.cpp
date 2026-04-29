@@ -57,7 +57,7 @@ void Theme::applyDisplayOff(uint16_t secs) {
 
 void Theme::save() {
     File f = SD.open(CONFIG_PATH, FILE_WRITE);
-    if (!f) { Serial.println("[CFG] Save failed"); return; }
+    if (!f) return;
     uint32_t magic = CONFIG_MAGIC;
     uint8_t  theme = (uint8_t)_idx;
     f.write((const uint8_t*)&magic,          4);
@@ -82,7 +82,6 @@ void Theme::load() {
         f.read((uint8_t*)&dispOff, 2);
     } else if (magic != CONFIG_MAGIC_V1) {
         f.close();
-        Serial.println("[CFG] Bad magic, using defaults");
         return;
     }
     f.close();
@@ -98,5 +97,4 @@ void Theme::load() {
     DIM  = e.dim;
     M5.Display.setBrightness(bright);
 
-    Serial.printf("[CFG] Loaded: theme=%d bright=%d dispoff=%ds\n", _idx, bright, dispOff);
 }

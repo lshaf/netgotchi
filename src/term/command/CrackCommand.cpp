@@ -271,6 +271,7 @@ void CrackCommand::onSubSelect(IMenuHost& host, int idx) {
     strncpy(_crackCtx.wordlistPath, dictPath, sizeof(_crackCtx.wordlistPath) - 1);
     host.menuClose();
     _pendingStart = true;
+    host.setCurrentService(this);
 }
 
 void CrackCommand::_loadPcapList() {
@@ -322,6 +323,35 @@ void CrackCommand::_loadDictList() {
 
 void CrackCommand::stop() {
     _crackCtx.stop = true;
+}
+
+bool CrackCommand::progressLine(char* buf, int len, uint32_t ms) const {
+    if (_crackState != CrackState::Running) return false;
+    uint32_t pct = (_crackCtx.fileSize > 0)
+        ? (uint32_t)((uint64_t)_crackCtx.bytesDone * 100 / _crackCtx.fileSize)
+        : 0;
+    if (pct > 100) pct = 100;
+    char bar[21]; int filled = (int)(20 * pct / 100);
+    for (int i = 0; i < 20; i++) bar[i] = (i < filled) ? '#' : ' ';
+    bar[20] = '\0';
+
+    char speedBuf[10] = "";
+    char etaBuf[10]   = "";
+    uint32_t elapsed_s = (ms - _crackStartMs + 500) / 1000;
+    if (elapsed_s > 0) {
+        uint32_t wps = _crackCtx.tested / elapsed_s;
+        if (wps >= 1000) snprintf(speedBuf, sizeof(speedBuf), " %luk/s", (unsigned long)(wps / 1000));
+        else             snprintf(speedBuf, sizeof(speedBuf), " %lu/s",  (unsigned long)wps);
+
+        uint32_t bps = (_crackCtx.bytesDone > 0) ? _crackCtx.bytesDone / elapsed_s : 0;
+        if (bps > 0 && _crackCtx.fileSize > _crackCtx.bytesDone) {
+            uint32_t eta = (_crackCtx.fileSize - _crackCtx.bytesDone) / bps;
+            if (eta < 60) snprintf(etaBuf, sizeof(etaBuf), " %lus",       (unsigned long)eta);
+            else          snprintf(etaBuf, sizeof(etaBuf), " %lum%02lus",  (unsigned long)(eta / 60), (unsigned long)(eta % 60));
+        }
+    }
+    snprintf(buf, (size_t)len, "[%s] %lu%%%s%s", bar, (unsigned long)pct, speedBuf, etaBuf);
+    return true;
 }
 
 // Worker: drains queue, runs all crypto
@@ -505,4 +535,5 @@ void CrackCommand::update(IMenuHost& host, uint32_t ms) {
 
     host.outPush(kSep);
     _crackState = CrackState::Idle;
+    host.setCurrentService(nullptr);
 }

@@ -21,23 +21,12 @@ public:
     void setPendingDisplayOff(uint16_t secs) override;
     void setPendingPowerOff() override;
     bool     typingIdle()    const override;
-    void     startNethunt()  override;
-    void     startNettrap()  override;
-    void     startNetguard() override;
-    uint32_t statsXp()         const override;
-    uint32_t statsCaptures()   const override;
-    uint32_t statsCracked()    const override;
-    uint32_t statsLevel()      const override;
-    uint32_t statsXpProgress() const override;
-    int      statsBattery()    const override;
-    bool     statsCharging()   const override;
-    void     onCracked()             override;
-    uint32_t statsDeauthDiscovers() const override;
-    uint32_t statsFloodDiscovers()  const override;
-    uint32_t statsEvilDiscovers()   const override;
-    void     onDeauthDiscover()           override;
-    void     onFloodDiscover()            override;
-    void     onEvilDiscover()             override;
+    bool     menuIsOpen()    const override;
+    void startService(MenuCommand* cmd)      override;
+    void setCurrentService(MenuCommand* cmd) override;
+    void onCapture()  override;
+    void onCracked()  override;
+    void onDiscover() override;
 
 private:
     static constexpr int LINE_COL  = 53;
@@ -73,20 +62,6 @@ private:
     bool     _cursorOn = true;
     uint32_t _cursorMs = 0;
 
-    // ── Hunting state tracking ───────────────────────────────────
-    uint32_t _lastCaptureCount      = 0;
-    uint32_t _lastApFoundCount      = 0;
-    uint32_t _lastDeauthTargetCount = 0;
-    uint32_t _lastEapolEventCount        = 0;
-    uint32_t _lastExternalDeauthCount    = 0;
-    uint32_t _lastGuardDeauthCount       = 0;
-    uint32_t _lastBeaconFloodCount       = 0;
-    uint32_t _lastEvilTwinCount          = 0;
-    uint32_t _statusLogMs                = 0;
-    uint8_t  _lastChannel           = 0;
-    uint32_t _pauseUntilMs          = 0;
-    uint8_t  _exhaustPhase          = 0;
-
     // ── Menu state ────────────────────────────────────────────────
     enum class MenuState : uint8_t { Closed, Root, Sub, PowerWait };
     MenuState    _menuState       = MenuState::Closed;
@@ -107,13 +82,9 @@ private:
     int          _menuScroll      = 0;
     int          _menuLastSubCount = -1;
 
-    // ── Hunt / Guard state ────────────────────────────────────────
-    bool         _nethuntRunning  = false;
-    bool         _nettrapRunning  = false;
-    bool         _netguardRunning = false;
-    void         _stopNethunt();
-    void         _stopNettrap();
-    void         _stopNetguard();
+    // ── Active service (only one runs at a time) ──────────────────
+    MenuCommand* _currentService = nullptr;
+    void         _stopCurrentService();
 
     void _logPush  (const char* line);
     void _qPushCmd (const char* fmt, ...);
@@ -121,7 +92,6 @@ private:
     bool _qPop     (uint8_t* outKind);
 
     void _updateTyping  (uint32_t ms);
-    void _updateHunting (uint32_t ms);
     void _handleTouch   (uint32_t ms);
 
     void _drawHud         (M5Canvas& c, uint32_t ms) const;
