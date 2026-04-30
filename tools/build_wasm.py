@@ -11,8 +11,9 @@ C_PATH   = os.path.join(ROOT, "web", "file_manager", "crack.c")
 OUT_PATH = os.path.join(ROOT, "web", "file_manager", "crack.wasm")
 
 EXPORTS = [
-    "wasm_try_password", "wasm_pw_buf", "wasm_ssid_buf",
-    "wasm_prf_data_buf", "wasm_eapol_buf", "wasm_mic_buf",
+    "wasm_try_passwords_batch",
+    "wasm_pw0_buf", "wasm_pw1_buf", "wasm_pw2_buf", "wasm_pw3_buf",
+    "wasm_ssid_buf", "wasm_prf_data_buf", "wasm_eapol_buf", "wasm_mic_buf",
 ]
 
 CLANG_CANDIDATES = [
@@ -30,7 +31,7 @@ def try_clang():
             continue
         if r.returncode != 0:
             continue
-        cmd = [cc, "--target=wasm32-unknown-unknown", "-O3",
+        cmd = [cc, "--target=wasm32-unknown-unknown", "-O3", "-msimd128",
                "-nostdlib", "-fno-builtin", "-Wl,--no-entry"] + \
               export_flags + ["-o", OUT_PATH, C_PATH]
         r = subprocess.run(cmd, capture_output=True, text=True)
@@ -40,18 +41,42 @@ def try_clang():
         return None  # found a clang but wasm32 unsupported — don't try others
     return None
 
+PYTHON310_CANDIDATES = [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "/opt/homebrew/opt/python@3.13/bin/python3.13",
+    "/opt/homebrew/opt/python@3.12/bin/python3.12",
+    "/opt/homebrew/opt/python@3.11/bin/python3.11",
+    "/opt/homebrew/opt/python@3.10/bin/python3.10",
+]
+
+def _find_python310():
+    import shutil
+    for py in PYTHON310_CANDIDATES:
+        if os.path.isfile(py):
+            return py
+    py = shutil.which("python3")
+    if py:
+        r = subprocess.run([py, "-c", "import sys; exit(0 if sys.version_info>=(3,10) else 1)"], capture_output=True)
+        if r.returncode == 0:
+            return py
+    return None
+
 def try_emcc():
     exported = ",".join('"_' + e + '"' for e in EXPORTS)
+    env = os.environ.copy()
+    py = _find_python310()
+    if py:
+        env["EMSDK_PYTHON"] = py
     try:
-        r = subprocess.run(["emcc", "--version"], capture_output=True)
+        r = subprocess.run(["emcc", "--version"], capture_output=True, env=env)
     except FileNotFoundError:
         return False
     if r.returncode != 0:
         return False
-    cmd = ["emcc", "-O3", "-s", "STANDALONE_WASM=1",
+    cmd = ["emcc", "-O3", "-msimd128", "-s", "STANDALONE_WASM=1",
            "-s", "EXPORTED_FUNCTIONS=[%s]" % exported,
            "--no-entry", "-o", OUT_PATH, C_PATH]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, env=env)
     if r.returncode == 0:
         return True
     print("  emcc: %s" % r.stderr.strip())
