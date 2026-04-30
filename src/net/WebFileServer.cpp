@@ -80,11 +80,7 @@ void WebFileServer::_prepareRoutes() {
         req->send_P(200, "application/javascript", WEBFILE_JS, WEBFILE_JS_LEN);
     });
     _server.on("/crack.wasm", HTTP_GET, [](AsyncWebServerRequest* req) {
-#ifdef WEBFILE_WASM_LEN
         req->send_P(200, "application/wasm", WEBFILE_WASM, WEBFILE_WASM_LEN);
-#else
-        req->send(404, "text/plain", "not built");
-#endif
     });
 
     // ── Dynamic theme colours ──────────────────────────────────
@@ -322,6 +318,42 @@ void WebFileServer::_prepareRoutes() {
             const char* base = strrchr(path.c_str(), '/');
             _pushActivity("[web] write %.38s", base ? base + 1 : path.c_str());
             req->send(200, "text/plain", "Content written.");
+
+        // pw (dictionary list / get)
+        } else if (cmd == "pw") {
+            const String param = req->hasParam("param", true)
+                ? req->getParam("param", true)->value() : "";
+            static const char* pwDir = "/netgotchi/dictionaries";
+
+            if (param == "list") {
+                File dir = SD.open(pwDir);
+                if (!dir || !dir.isDirectory()) {
+                    req->send(200, "text/plain", "");
+                    return;
+                }
+                String resp = "";
+                while (true) {
+                    File f = dir.openNextFile();
+                    if (!f) break;
+                    if (!f.isDirectory())
+                        resp += String(f.name()) + ":" + String(f.size()) + "\n";
+                    f.close();
+                }
+                dir.close();
+                req->send(200, "text/plain", resp);
+
+            } else if (param == "get") {
+                const String name = req->hasParam("name", true)
+                    ? req->getParam("name", true)->value() : "";
+                if (name.isEmpty()) { req->send(400, "text/plain", "No name specified."); return; }
+                String filePath = String(pwDir) + "/" + name;
+                if (!SD.exists(filePath.c_str())) { req->send(404, "text/plain", "Not found."); return; }
+                _pushActivity("[web] pw get %.38s", name.c_str());
+                req->send(SD, filePath.c_str(), "text/plain");
+
+            } else {
+                req->send(400, "text/plain", "param must be list or get");
+            }
 
         // saveCrack
         } else if (cmd == "saveCrack") {

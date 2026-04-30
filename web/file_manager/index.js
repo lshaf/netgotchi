@@ -831,20 +831,25 @@ function _tryPw(pw,hs){
   return true;
 }
 
-// WASM state
-let _wasm=null,_wasmMem=null,_pPw,_pSsid,_pPrf,_pEapol,_pMic;
+let _wasm=null,_wasmMem=null,_pPw=[0,0,0,0],_pSsid,_pPrf,_pEapol,_pMic;
 
 async function _loadWasm(){
   try{
-    const r=await fetch('/crack.wasm');
-    if(!r.ok)return false;
+    const r=await fetch('${location.origin}/crack.wasm');
+    if(!r.ok){console.log('[crack] wasm fetch failed: HTTP '+r.status+', using JS');return false;}
     const {instance:inst}=await WebAssembly.instantiate(await r.arrayBuffer(),{});
     const e=inst.exports;
+    const required=['memory','wasm_pw0_buf','wasm_pw1_buf','wasm_pw2_buf','wasm_pw3_buf',
+                    'wasm_ssid_buf','wasm_prf_data_buf','wasm_eapol_buf','wasm_mic_buf',
+                    'wasm_try_passwords_batch'];
+    const missing=required.filter(k=>!e[k]);
+    if(missing.length){console.log('[crack] wasm missing exports: '+missing.join(', ')+', using JS');return false;}
     _wasmMem=new Uint8Array(e.memory.buffer);
-    _pPw=e.wasm_pw_buf();_pSsid=e.wasm_ssid_buf();
+    for(let b=0;b<4;b++) _pPw[b]=e['wasm_pw'+b+'_buf']();
+    _pSsid=e.wasm_ssid_buf();
     _pPrf=e.wasm_prf_data_buf();_pEapol=e.wasm_eapol_buf();_pMic=e.wasm_mic_buf();
     _wasm=e;return true;
-  }catch(e){return false;}
+  }catch(e){console.log('[crack] wasm load error: '+e.message+', using JS');return false;}
 }
 
 onmessage=async function(e){
@@ -855,6 +860,7 @@ onmessage=async function(e){
   const hs=msg.hs,words=msg.words,total=words.length;
 
   const wasmOk=await _loadWasm();
+  postMessage({type:"mode",mode:wasmOk?'wasm':'js'});
 
   if(wasmOk){
     _wasmMem.set(hs.ssidBytes,_pSsid);
@@ -862,27 +868,31 @@ onmessage=async function(e){
     _wasmMem.set(hs.eapol,_pEapol);
     _wasmMem.set(hs.mic,_pMic);
   } else {
-    // label(23) + prfData(76) + counter byte(1) = 100, matches fast_prf512
     _pin=new Uint8Array(100);
     _pin.set(_PRF_LABEL,0);
     _pin.set(hs.prfData,_PRF_LABEL.length);
-    // _pin[99]=0 already (block counter for i=0)
   }
 
   let tested=0,lastUpd=Date.now();
-  for(let i=0;i<total&&!_stop;i++){
-    let hit;
+  for(let i=0;i<total&&!_stop;){
     if(wasmOk){
-      const r=_enc.encodeInto(words[i],_PWBUF);
-      _wasmMem.set(_PWBUF.subarray(0,r.written),_pPw);
-      hit=_wasm.wasm_try_password(r.written,hs.ssidBytes.length,hs.eapol.length)!==0;
+      const batchStart=i;
+      const count=Math.min(4,total-batchStart);
+      const pl=[0,0,0,0];
+      for(let b=0;b<count;b++){
+        const r=_enc.encodeInto(words[batchStart+b],_PWBUF);
+        _wasmMem.set(_PWBUF.subarray(0,r.written),_pPw[b]);
+        pl[b]=r.written;
+      }
+      const hit=_wasm.wasm_try_passwords_batch(count,pl[0],pl[1],pl[2],pl[3],hs.ssidBytes.length,hs.eapol.length);
+      tested+=count;i+=count;
+      if(hit>=0){postMessage({type:"done",found:true,pw:words[batchStart+hit],tested:tested-count+hit+1});return;}
     }else{
-      hit=_tryPw(words[i],hs);
+      if(_tryPw(words[i],hs)){postMessage({type:"done",found:true,pw:words[i],tested:tested+1});return;}
+      tested++;i++;
     }
-    tested++;
     const now=Date.now();
     if(now-lastUpd>=150){lastUpd=now;postMessage({type:"progress",tested,total});await new Promise(r=>setTimeout(r,0));}
-    if(hit){postMessage({type:"done",found:true,pw:words[i],tested});return;}
   }
   postMessage({type:"done",found:false,stopped:_stop,tested});
 };
@@ -893,6 +903,7 @@ function _crackSetPhase(phase) {
   $(".crack-phase-dict").classList.toggle("hidden", phase !== "dict");
   $(".crack-phase-run").classList.toggle("hidden", phase !== "run");
   $(".crack-result").classList.add("hidden");
+  if (phase === "dict") $(".crack-mode").classList.add("hidden");
   $(".act-crack-go").classList.toggle("hidden", phase !== "dict");
   $(".act-crack-stop").classList.toggle("hidden", phase !== "run");
   $(".act-crack-retry-save").classList.add("hidden");
@@ -979,20 +990,18 @@ async function loadDictList() {
   sel.appendChild(builtin);
 
   try {
-    const res   = await requestPost("/", { command: "ls", path: "/netgotchi/dictionaries" });
+    const res   = await requestPost("/", { command: "pw", param: "list" });
     const files = res.split("\n")
-      .filter(l => l.startsWith("FILE:"))
-      .map(l => l.split(":")[1])
+      .filter(Boolean)
+      .map(l => l.split(":")[0])
       .filter(Boolean);
     files.forEach(name => {
       const opt = document.createElement("option");
-      opt.value = "/netgotchi/dictionaries/" + name;
+      opt.value = name;
       opt.textContent = name;
       sel.appendChild(opt);
     });
-  } catch (_) {
-    // dir may not exist; builtin still available
-  }
+  } catch (_) {}
 }
 
 // ── Crack: runner ─────────────────────────────────────────────
@@ -1007,7 +1016,6 @@ async function runCrack(pcapPath) {
   updateCrackProgress(0, 0, 0, 0);
   $(".crack-stats").textContent = "Parsing PCAP...";
 
-  // Fetch PCAP binary
   try {
     let url = "/download?file=" + encodeURIComponent(pcapPath);
     if (IS_DEV) url = "/puteros" + url;
@@ -1023,7 +1031,6 @@ async function runCrack(pcapPath) {
     return;
   }
 
-  // Parse handshake
   const hs = parsePcap(pcapData, pcapPath);
   if (!hs) {
     _crackDone("No complete WPA2 handshake in PCAP");
@@ -1031,14 +1038,13 @@ async function runCrack(pcapPath) {
     return;
   }
 
-  // Load wordlist
   $(".crack-stats").textContent = "Loading dictionary...";
   let words;
   if (dictPath === "__builtin__") {
     words = _BUILTIN_DICT;
   } else {
     try {
-      const text = await requestPost("/", { command: "cat", path: dictPath });
+      const text = await requestPost("/", { command: "pw", param: "get", name: dictPath });
       words = text.split("\n")
         .map(l => l.replace(/\r/g, ""))
         .filter(l => l.length >= 8 && l.length <= 63);
@@ -1058,7 +1064,11 @@ async function runCrack(pcapPath) {
 
   _crackWorker.onmessage = function(e) {
     const msg = e.data;
-    if (msg.type === "progress") {
+    if (msg.type === "mode") {
+      const el = $(".crack-mode");
+      el.textContent = msg.mode === "wasm" ? "SIMD WASM" : "JS";
+      el.classList.remove("hidden");
+    } else if (msg.type === "progress") {
       const secs = Math.max((Date.now() - t0) / 1000, 0.001);
       const wps = Math.round(msg.tested / secs);
       const eta = wps > 0 ? Math.round((total - msg.tested) / wps) : 0;
