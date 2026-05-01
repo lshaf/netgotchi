@@ -7,13 +7,14 @@ class WiFiHunter;
 class NethuntCommand : public MenuCommand {
 public:
     enum class HuntPhase : uint8_t {
-        SetChannel,
-        WaitChannel,
-        CheckChannel,
-        Deauthing,
-        PostDeauth,
-        NextWifi,
-        Exhaust,
+        StartScan,    // initiate async WiFi scan
+        Scanning,     // wait for scan completion
+        ScanDone,     // process results, build channel map
+        SetChannel,   // switch radio to target channel
+        DeauthRound,  // fire deauths at all APs on channel
+        WaitRound,    // 5s gap between deauth rounds
+        NextChannel,  // advance channel or go to exhaust
+        Exhaust,      // 60s cooldown before next scan
     };
 
     const char* label() const override { return "nethunt"; }
@@ -35,14 +36,12 @@ private:
     WiFiHunter* _hunter = nullptr;
 
     uint32_t _lastCaptureCount        = 0;
-    uint32_t _lastApFoundCount        = 0;
-    uint32_t _lastDeauthTargetCount   = 0;
     uint32_t _lastEapolEventCount     = 0;
     uint32_t _lastExternalDeauthCount = 0;
 
     uint8_t   _channel      = 1;
-    uint8_t   _deauthApIdx  = 0;
+    uint16_t  _channelMask  = 0;    // bits 1-13: channels with pending APs
     uint8_t   _deauthRound  = 0;
     uint32_t  _pauseUntilMs = 0;
-    HuntPhase _huntPhase    = HuntPhase::SetChannel;
+    HuntPhase _huntPhase    = HuntPhase::StartScan;
 };

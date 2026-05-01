@@ -70,6 +70,13 @@ void WiFiHunter::deauthApByIdx(uint8_t idx) {
     _deauthAp(_aps[idx]);
 }
 
+void WiFiHunter::deauthAllOnChannel(uint8_t ch) {
+    for (int i = 0; i < _apCount; i++) {
+        if (_aps[i].channel == ch && !_aps[i].validated)
+            _deauthAp(_aps[i]);
+    }
+}
+
 void WiFiHunter::resetDeauthCountsOnChannel(uint8_t ch) {
     for (int i = 0; i < _apCount; i++)
         if (_aps[i].channel == ch && !_aps[i].validated)
@@ -616,4 +623,26 @@ bool WiFiHunter::_pcapIsComplete(const ApInfo& ap) {
 
 bool WiFiHunter::pcapIsComplete(const char* path) {
     return _pcapIsCompletePath(path);
+}
+
+// ── Register AP from active scan result ──────────────────────
+
+void WiFiHunter::registerApFromScan(const uint8_t* bssid, const char* ssid, uint8_t ch) {
+    ApInfo* ap = _findAp(bssid);
+    if (!ap) {
+        ap = _registerAp(bssid);
+        if (!ap) return;
+    }
+    ap->channel = ch;
+    if (ap->ssid[0] == '\0' && ssid && ssid[0] != '\0') {
+        strncpy(ap->ssid, ssid, 32);
+        ap->ssid[32] = '\0';
+    }
+    if (!ap->validated && ap->ssid[0] != '\0' && _pcapIsComplete(*ap)) {
+        ap->validated   = true;
+        ap->pcapCreated = true;
+        int idx = (int)(ap - _aps);
+        _pendingEapolCount[idx] = 0;
+        memset(_pendingEapolLen[idx], 0, sizeof(_pendingEapolLen[idx]));
+    }
 }

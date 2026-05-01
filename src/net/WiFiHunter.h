@@ -27,7 +27,9 @@ public:
     void resume() { esp_wifi_set_promiscuous_rx_cb(_promiscCb); esp_wifi_set_promiscuous(true); }
     void setChannel(uint8_t ch);
     void deauthApByIdx(uint8_t idx);
+    void deauthAllOnChannel(uint8_t ch);
     void resetDeauthCountsOnChannel(uint8_t ch);
+    void registerApFromScan(const uint8_t* bssid, const char* ssid, uint8_t ch);
     bool pcapIsComplete(const char* path);
 
     uint8_t  channel()                   const { return _channel; }

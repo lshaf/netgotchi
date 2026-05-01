@@ -13,7 +13,6 @@
 #include "command/PowerOffCommand.h"
 #include "command/CrackCommand.h"
 #include "command/NethuntCommand.h"
-#include "command/NettrapCommand.h"
 #include "command/NetguardCommand.h"
 #include "command/SetCommand.h"
 #include "command/VaultCommand.h"
@@ -27,7 +26,6 @@ static constexpr int SD_CS = 4;
 static WebFileServer s_webserver;
 
 NethuntCommand    s_nethunt;
-NettrapCommand    s_nettrap;
 NetguardCommand   s_netguard;
 ProfileCommand    s_profile;
 CrackCommand      s_crack;
@@ -37,7 +35,7 @@ PowerOffCommand   s_poweroff;
 CleanEapolCommand s_cleaneapol;
 WebServerCommand  s_wsrv;
 MenuCommand*      s_rootItems[] = {
-    &s_nethunt, &s_nettrap, &s_netguard, &s_profile, &s_crack, &s_vault, &s_cleaneapol, &s_wsrv, &s_set, &s_poweroff
+    &s_nethunt, &s_netguard, &s_profile, &s_crack, &s_vault, &s_cleaneapol, &s_wsrv, &s_set, &s_poweroff
 };
 int ROOT_N = (int)(sizeof(s_rootItems) / sizeof(s_rootItems[0]));
 
@@ -102,7 +100,6 @@ void App::init() {
     _hunter.init();
     _hunter.pause();
     s_nethunt.init(&_hunter);
-    s_nettrap.init(&_hunter);
     s_netguard.init(&_guard);
     s_profile.init(&_stats);
     s_cleaneapol.init(&_hunter);

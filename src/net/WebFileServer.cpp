@@ -68,19 +68,19 @@ void WebFileServer::_prepareRoutes() {
 
     // ── Static web assets (PROGMEM) ───────────────────────────
     _server.on("/", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send_P(200, "text/html", WEBFILE_HTML, WEBFILE_HTML_LEN);
+        req->send(200, "text/html", WEBFILE_HTML, WEBFILE_HTML_LEN);
     });
     _server.on("/index.html", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send_P(200, "text/html", WEBFILE_HTML, WEBFILE_HTML_LEN);
+        req->send(200, "text/html", WEBFILE_HTML, WEBFILE_HTML_LEN);
     });
     _server.on("/index.css", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send_P(200, "text/css", WEBFILE_CSS, WEBFILE_CSS_LEN);
+        req->send(200, "text/css", WEBFILE_CSS, WEBFILE_CSS_LEN);
     });
     _server.on("/index.js", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send_P(200, "application/javascript", WEBFILE_JS, WEBFILE_JS_LEN);
+        req->send(200, "application/javascript", WEBFILE_JS, WEBFILE_JS_LEN);
     });
     _server.on("/crack.wasm", HTTP_GET, [](AsyncWebServerRequest* req) {
-        req->send_P(200, "application/wasm", WEBFILE_WASM, WEBFILE_WASM_LEN);
+        req->send(200, "application/wasm", WEBFILE_WASM, WEBFILE_WASM_LEN);
     });
 
     // ── Dynamic theme colours ──────────────────────────────────
