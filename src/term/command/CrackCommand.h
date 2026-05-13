@@ -2,6 +2,8 @@
 #include "MenuCommand.h"
 #include "../../core/FastWpaCrack.h"
 #include <cstring>
+#include <string>
+#include <vector>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -34,14 +36,12 @@ public:
 private:
     // ── Sub-menu state ─────────────────────────────────────────
     enum SubState : uint8_t { kPcap, kDict };
-    static constexpr int MAX_FILES = 10;
 
     SubState _subState   = kPcap;
     bool     _pcapLoaded = false;
-    char     _selPcap[64]              = {};
-    char     _filePaths[MAX_FILES][64] = {};
-    char     _fileNames[MAX_FILES][52] = {};
-    int      _fileCount  = 0;
+    char     _selPcap[64] = {};
+    std::vector<std::string> _filePaths;
+    std::vector<std::string> _fileNames;
     mutable char _hint[52] = {};
 
     void _loadPcapList();

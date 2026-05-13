@@ -46,17 +46,18 @@ void CrackCommand::execute(IMenuHost& host) {
 }
 
 int CrackCommand::subCount() const {
-    if (_subState == kPcap) return _fileCount + 1;
-    return _fileCount + 2;
+    if (_subState == kPcap) return (int)_filePaths.size() + 1;
+    return (int)_filePaths.size() + 2;
 }
 
 const char* CrackCommand::subLabel(int idx) const {
+    int n = (int)_fileNames.size();
     if (_subState == kPcap) {
-        if (idx < _fileCount) return _fileNames[idx];
+        if (idx < n) return _fileNames[idx].c_str();
         return "back";
     }
-    if (idx < _fileCount) return _fileNames[idx];
-    if (idx == _fileCount) return "built in";
+    if (idx < n) return _fileNames[idx].c_str();
+    if (idx == n) return "built in";
     return "back";
 }
 
@@ -70,9 +71,10 @@ const char* CrackCommand::inputHint() const {
 }
 
 void CrackCommand::onSubSelect(IMenuHost& host, int idx) {
+    int n = (int)_filePaths.size();
     if (_subState == kPcap) {
-        if (idx < _fileCount) {
-            strncpy(_selPcap, _filePaths[idx], sizeof(_selPcap) - 1);
+        if (idx < n) {
+            strncpy(_selPcap, _filePaths[idx].c_str(), sizeof(_selPcap) - 1);
             _loadDictList();
             _subState = kDict;
         } else {
@@ -83,10 +85,10 @@ void CrackCommand::onSubSelect(IMenuHost& host, int idx) {
 
     const char* dictPath = nullptr;
     const char* dictName = nullptr;
-    if (idx < _fileCount) {
-        dictPath = _filePaths[idx];
-        dictName = _basename(_filePaths[idx]);
-    } else if (idx == _fileCount) {
+    if (idx < n) {
+        dictPath = _filePaths[idx].c_str();
+        dictName = _basename(_filePaths[idx].c_str());
+    } else if (idx == n) {
         dictPath = "builtin";
         dictName = "builtin";
     } else {
@@ -107,47 +109,39 @@ void CrackCommand::onSubSelect(IMenuHost& host, int idx) {
 }
 
 void CrackCommand::_loadPcapList() {
-    _fileCount = 0;
+    _filePaths.clear();
+    _fileNames.clear();
     File dir = SD.open("/netgotchi/eapol");
     if (!dir) return;
-    File f = dir.openNextFile();
-    while (f && _fileCount < MAX_FILES) {
-        if (!f.isDirectory()) {
-            const char* full = f.name();
-            const char* base = strrchr(full, '/');
-            base = base ? base + 1 : full;
-            int nl = (int)strlen(base);
-            if (nl >= 5 && strcmp(base + nl - 5, ".pcap") == 0) {
-                snprintf(_filePaths[_fileCount], 64, "/netgotchi/eapol/%s", base);
-                snprintf(_fileNames[_fileCount], 52, "%.51s", base);
-                _fileCount++;
-            }
+    bool isDir = false;
+    String fname;
+    while (!(fname = dir.getNextFileName(&isDir)).isEmpty()) {
+        if (isDir) continue;
+        const char* base = strrchr(fname.c_str(), '/');
+        base = base ? base + 1 : fname.c_str();
+        int nl = (int)strlen(base);
+        if (nl >= 5 && strcmp(base + nl - 5, ".pcap") == 0) {
+            _filePaths.push_back(fname.c_str());
+            _fileNames.push_back(base);
         }
-        f.close();
-        f = dir.openNextFile();
     }
-    if (f) f.close();
     dir.close();
 }
 
 void CrackCommand::_loadDictList() {
-    _fileCount = 0;
+    _filePaths.clear();
+    _fileNames.clear();
     File dir = SD.open("/netgotchi/dictionaries");
     if (!dir) return;
-    File f = dir.openNextFile();
-    while (f && _fileCount < MAX_FILES) {
-        if (!f.isDirectory()) {
-            const char* full = f.name();
-            const char* base = strrchr(full, '/');
-            base = base ? base + 1 : full;
-            snprintf(_filePaths[_fileCount], 64, "/netgotchi/dictionaries/%s", base);
-            snprintf(_fileNames[_fileCount], 52, "%.51s", base);
-            _fileCount++;
-        }
-        f.close();
-        f = dir.openNextFile();
+    bool isDir = false;
+    String fname;
+    while (!(fname = dir.getNextFileName(&isDir)).isEmpty()) {
+        if (isDir) continue;
+        const char* base = strrchr(fname.c_str(), '/');
+        base = base ? base + 1 : fname.c_str();
+        _filePaths.push_back(fname.c_str());
+        _fileNames.push_back(base);
     }
-    if (f) f.close();
     dir.close();
 }
 
