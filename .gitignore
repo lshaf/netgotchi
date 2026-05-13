@@ -9,3 +9,4 @@ __pycache__/
 .mcp.json
 build/
 src/net/WebFiles.h
+.DS_Store
