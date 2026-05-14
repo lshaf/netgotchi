@@ -1,4 +1,5 @@
 #include "ProfileCommand.h"
+#include "../../hw/Hw.h"
 #include <SD.h>
 #include <esp_heap_caps.h>
 #include <stdio.h>
@@ -46,7 +47,7 @@ void ProfileCommand::execute(IMenuHost& host) {
              tH ? (int)((uint64_t)(tH - fH) * 100 / tH) : 0);
     rowPush(host, "ram", val);
 
-    uint64_t sdU = SD.usedBytes(), sdT = SD.totalBytes();
+    uint64_t sdU = Hw::sdUsedBytes(), sdT = Hw::sdTotalBytes();
     if (sdT > 0)
         snprintf(val, sizeof(val), "%lu/%lu mb",
                  (unsigned long)(sdU / (1024*1024)), (unsigned long)(sdT / (1024*1024)));

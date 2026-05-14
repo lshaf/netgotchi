@@ -2,6 +2,7 @@
 #include "WebFiles.h"
 #include "../term/Theme.h"
 #include "../core/FastWpaCrack.h"
+#include "../hw/Hw.h"
 #include <WiFi.h>
 #include <ESPmDNS.h>
 #include <SD.h>
@@ -45,7 +46,7 @@ bool WebFileServer::_isAuth(AsyncWebServerRequest* req, bool logout) {
 // ── Recursive directory delete ────────────────────────────────
 
 bool WebFileServer::_removeDir(const String& path) {
-    File dir = SD.open(path.c_str());
+    File dir = Hw::sd.open(path.c_str());
     if (!dir || !dir.isDirectory()) return false;
     while (true) {
         File f = dir.openNextFile();
@@ -56,10 +57,10 @@ bool WebFileServer::_removeDir(const String& path) {
         bool isD = f.isDirectory();
         f.close();
         if (isD) _removeDir(fp);
-        else     SD.remove(fp.c_str());
+        else     Hw::sd.remove(fp.c_str());
     }
     dir.close();
-    return SD.rmdir(path.c_str());
+    return Hw::sd.rmdir(path.c_str());
 }
 
 // ── Routes ────────────────────────────────────────────────────
@@ -108,10 +109,10 @@ void WebFileServer::_prepareRoutes() {
         if (!_isAuth(req)) { req->send(401, "text/plain", "not authenticated."); return; }
         if (!req->hasArg("file")) { req->send(400, "text/plain", "No file specified."); return; }
         String path = req->arg("file");
-        if (!SD.exists(path.c_str())) { req->send(404, "text/plain", "File not found."); return; }
+        if (!Hw::sd.exists(path.c_str())) { req->send(404, "text/plain", "File not found."); return; }
         const char* base = strrchr(path.c_str(), '/');
         _pushActivity("[web] get %.41s", base ? base + 1 : path.c_str());
-        req->send(SD, path.c_str(), "application/octet-stream", true);
+        req->send(Hw::sd, path.c_str(), "application/octet-stream", true);
     });
 
     // ── File upload ────────────────────────────────────────────
@@ -126,8 +127,8 @@ void WebFileServer::_prepareRoutes() {
                     int sl = _uploadTempPath.lastIndexOf('/');
                     String target = folder + _uploadTempPath.substring(sl + 1);
                     if (target != _uploadTempPath) {
-                        SD.mkdir(folder.substring(0, folder.length() - 1).c_str());
-                        SD.rename(_uploadTempPath.c_str(), target.c_str());
+                        Hw::sd.mkdir(folder.substring(0, folder.length() - 1).c_str());
+                        Hw::sd.rename(_uploadTempPath.c_str(), target.c_str());
                     }
                 }
                 _uploadTempPath = "";
@@ -142,9 +143,9 @@ void WebFileServer::_prepareRoutes() {
                 String path = folder.isEmpty() ? "/" : folder;
                 if (!path.startsWith("/")) path = "/" + path;
                 if (!path.endsWith("/"))   path += "/";
-                SD.mkdir(path.substring(0, path.length() - 1).c_str());
+                Hw::sd.mkdir(path.substring(0, path.length() - 1).c_str());
                 _uploadTempPath = path + filename;
-                _fsUpload = SD.open(_uploadTempPath.c_str(), FILE_WRITE);
+                _fsUpload = Hw::sd.open(_uploadTempPath.c_str(), FILE_WRITE);
             }
             if (len && _fsUpload) _fsUpload.write(data, len);
             if (final && _fsUpload) {
@@ -172,7 +173,7 @@ void WebFileServer::_prepareRoutes() {
             String path = req->hasParam("path", true)
                 ? req->getParam("path", true)->value() : "/";
             if (path.isEmpty()) path = "/";
-            File dir = SD.open(path.c_str());
+            File dir = Hw::sd.open(path.c_str());
             if (!dir || !dir.isDirectory()) {
                 req->send(403, "text/plain", "Not a directory.");
                 return;
@@ -194,8 +195,8 @@ void WebFileServer::_prepareRoutes() {
 
         // sysinfo
         } else if (cmd == "sysinfo") {
-            uint64_t total = SD.totalBytes();
-            uint64_t used  = SD.usedBytes();
+            uint64_t total = Hw::sdTotalBytes();
+            uint64_t used  = Hw::sdUsedBytes();
             String resp = "netgotchi File Manager\n";
             resp += "FS:" + String(total - used) + "\n";
             resp += "US:" + String(used) + "\n";
@@ -236,11 +237,11 @@ void WebFileServer::_prepareRoutes() {
             const String path = req->hasParam("path", true)
                 ? req->getParam("path", true)->value() : "";
             if (path.isEmpty()) { req->send(400, "text/plain", "No path specified."); return; }
-            if (!SD.exists(path.c_str())) { req->send(404, "text/plain", "Not found."); return; }
-            File f = SD.open(path.c_str());
+            if (!Hw::sd.exists(path.c_str())) { req->send(404, "text/plain", "Not found."); return; }
+            File f = Hw::sd.open(path.c_str());
             bool isD = f.isDirectory();
             f.close();
-            bool ok = isD ? _removeDir(path) : SD.remove(path.c_str());
+            bool ok = isD ? _removeDir(path) : Hw::sd.remove(path.c_str());
             if (ok) {
                 const char* base = strrchr(path.c_str(), '/');
                 _pushActivity("[web] rm %.41s", base ? base + 1 : path.c_str());
@@ -258,8 +259,8 @@ void WebFileServer::_prepareRoutes() {
                 req->send(400, "text/plain", "src or dst not specified.");
                 return;
             }
-            if (!SD.exists(src.c_str())) { req->send(404, "text/plain", "Source not found."); return; }
-            bool ok = SD.rename(src.c_str(), dst.c_str());
+            if (!Hw::sd.exists(src.c_str())) { req->send(404, "text/plain", "Source not found."); return; }
+            bool ok = Hw::sd.rename(src.c_str(), dst.c_str());
             if (ok) {
                 const char* bs = strrchr(src.c_str(), '/');
                 const char* bd = strrchr(dst.c_str(), '/');
@@ -274,7 +275,7 @@ void WebFileServer::_prepareRoutes() {
             const String path = req->hasParam("path", true)
                 ? req->getParam("path", true)->value() : "";
             if (path.isEmpty()) { req->send(400, "text/plain", "No path specified."); return; }
-            bool ok = SD.mkdir(path.c_str());
+            bool ok = Hw::sd.mkdir(path.c_str());
             if (ok) _pushActivity("[web] mkdir %.40s", path.c_str());
             req->send(ok ? 200 : 500, "text/plain",
                 ok ? "Directory created." : "Failed to create directory.");
@@ -284,7 +285,7 @@ void WebFileServer::_prepareRoutes() {
             const String path = req->hasParam("path", true)
                 ? req->getParam("path", true)->value() : "";
             if (path.isEmpty()) { req->send(400, "text/plain", "No path specified."); return; }
-            File f = SD.open(path.c_str(), FILE_WRITE);
+            File f = Hw::sd.open(path.c_str(), FILE_WRITE);
             if (f) {
                 f.close();
                 const char* base = strrchr(path.c_str(), '/');
@@ -299,10 +300,10 @@ void WebFileServer::_prepareRoutes() {
             const String path = req->hasParam("path", true)
                 ? req->getParam("path", true)->value() : "";
             if (path.isEmpty()) { req->send(400, "text/plain", "No path specified."); return; }
-            if (!SD.exists(path.c_str())) { req->send(404, "text/plain", "Not found."); return; }
+            if (!Hw::sd.exists(path.c_str())) { req->send(404, "text/plain", "Not found."); return; }
             const char* base = strrchr(path.c_str(), '/');
             _pushActivity("[web] cat %.38s", base ? base + 1 : path.c_str());
-            req->send(SD, path.c_str(), "text/plain");
+            req->send(Hw::sd, path.c_str(), "text/plain");
 
         // echo (write file)
         } else if (cmd == "echo") {
@@ -311,7 +312,7 @@ void WebFileServer::_prepareRoutes() {
             const String content = req->hasParam("content", true)
                 ? req->getParam("content", true)->value() : "";
             if (path.isEmpty()) { req->send(400, "text/plain", "No path specified."); return; }
-            File f = SD.open(path.c_str(), FILE_WRITE);
+            File f = Hw::sd.open(path.c_str(), FILE_WRITE);
             if (!f) { req->send(500, "text/plain", "Failed to open file."); return; }
             f.print(content);
             f.close();
@@ -326,7 +327,7 @@ void WebFileServer::_prepareRoutes() {
             static const char* pwDir = "/netgotchi/dictionaries";
 
             if (param == "list") {
-                File dir = SD.open(pwDir);
+                File dir = Hw::sd.open(pwDir);
                 if (!dir || !dir.isDirectory()) {
                     req->send(200, "text/plain", "");
                     return;
@@ -347,9 +348,9 @@ void WebFileServer::_prepareRoutes() {
                     ? req->getParam("name", true)->value() : "";
                 if (name.isEmpty()) { req->send(400, "text/plain", "No name specified."); return; }
                 String filePath = String(pwDir) + "/" + name;
-                if (!SD.exists(filePath.c_str())) { req->send(404, "text/plain", "Not found."); return; }
+                if (!Hw::sd.exists(filePath.c_str())) { req->send(404, "text/plain", "Not found."); return; }
                 _pushActivity("[web] pw get %.38s", name.c_str());
-                req->send(SD, filePath.c_str(), "text/plain");
+                req->send(Hw::sd, filePath.c_str(), "text/plain");
 
             } else {
                 req->send(400, "text/plain", "param must be list or get");
@@ -387,8 +388,8 @@ void WebFileServer::_prepareRoutes() {
                      bssid, hs.ssid);
             // check existing content to decide whether to award XP
             bool award = true;
-            if (SD.exists(savePath)) {
-                File rf = SD.open(savePath, FILE_READ);
+            if (Hw::sd.exists(savePath)) {
+                File rf = Hw::sd.open(savePath, FILE_READ);
                 if (rf) {
                     char existing[64] = {};
                     int n = rf.readBytes(existing, (int)pw.length() + 1);
@@ -397,8 +398,8 @@ void WebFileServer::_prepareRoutes() {
                         award = false;
                 }
             }
-            SD.mkdir("/netgotchi/cracked");
-            File f = SD.open(savePath, FILE_WRITE);
+            Hw::sd.mkdir("/netgotchi/cracked");
+            File f = Hw::sd.open(savePath, FILE_WRITE);
             if (!f) { req->send(500, "text/plain", "write failed"); return; }
             f.print(pw);
             f.close();

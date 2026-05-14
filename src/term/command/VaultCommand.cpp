@@ -1,4 +1,5 @@
 #include "VaultCommand.h"
+#include "../../hw/Hw.h"
 #include <SD.h>
 #include <cstring>
 #include <cstdio>
@@ -36,7 +37,7 @@ void VaultCommand::onSubSelect(IMenuHost& host, int idx) {
     host.menuClose();
     host.cmdPush(buf);
 
-    File f = SD.open(_filePaths[idx], FILE_READ);
+    File f = Hw::sd.open(_filePaths[idx], FILE_READ);
     if (f) {
         size_t n = f.readBytes(val, sizeof(val) - 1);
         val[n] = '\0';
@@ -53,7 +54,7 @@ void VaultCommand::onSubSelect(IMenuHost& host, int idx) {
 
 void VaultCommand::_loadList() {
     _fileCount = 0;
-    File dir = SD.open("/netgotchi/cracked");
+    File dir = Hw::sd.open("/netgotchi/cracked");
     if (!dir) return;
     File f = dir.openNextFile();
     while (f && _fileCount < MAX_FILES) {

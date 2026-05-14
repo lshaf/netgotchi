@@ -2,7 +2,6 @@
 #include "AppLayout.h"
 #include "Virus.h"
 #include "Theme.h"
-#include <M5Unified.h>
 #include <esp_heap_caps.h>
 
 using namespace AppLayout;
@@ -12,7 +11,7 @@ extern int           ROOT_N;
 
 // ── Header bar ────────────────────────────────────────────────
 
-static void drawValueBar(M5Canvas& c,
+static void drawValueBar(TFT_eSprite& c,
                          int barX, int barY, int barW, int barH,
                          const char* label, const char* valText, int fillPct)
 {
@@ -30,20 +29,20 @@ static void drawValueBar(M5Canvas& c,
     const int fill   = innerW * fillPct / 100;
     if (fill > 0) c.fillRect(innerX, innerY, fill, innerH, Theme::FG);
 
-    c.setFont(&fonts::Font0);
+    c.setTextFont(1);
     c.setTextSize(1);
     c.setTextColor(Theme::BG);
     const int midY = barY + barH / 2 + 1;
     const int padL = (barH - CHAR_H) / 2;
 
-    c.setTextDatum(lgfx::middle_left);
+    c.setTextDatum(ML_DATUM);
     c.drawString(label, barX + padL + 1, midY);
 
-    c.setTextDatum(lgfx::middle_right);
+    c.setTextDatum(MR_DATUM);
     c.drawString(valText, barX + barW - padL + 1, midY);
 }
 
-void App::_drawHud(M5Canvas& c, uint32_t ms) const {
+void App::_drawHud(TFT_eSprite& c, uint32_t ms) const {
     c.fillRect(0, 0, SCR_W, HEAD_H, Theme::BG);
 
     int  bat      = _stats.battery();
@@ -79,8 +78,8 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
         const int cx = DISP_BTN_X + DISP_BTN_W / 2;   // 20
         const int cy = DISP_BTN_Y + DISP_BTN_H / 2;   // 20
         c.fillRect(DISP_BTN_X, DISP_BTN_Y, DISP_BTN_W, DISP_BTN_H, Theme::BG);
-        // Thick arc with ~70° gap at top (M5GFX: 0°=right, so top=270°; 305°→235°)
-        c.drawArc(cx, cy, 11, 9, 305, 235, Theme::FG);
+        // ~70° gap at top (TFT_eSPI rotation 6: 0°=bottom, gap centered on 180°)
+        c.drawArc(cx, cy, 11, 9, 215, 145, Theme::FG, Theme::BG);
         // Vertical stem through the gap (3px wide)
         c.fillRect(cx - 1, cy - 13, 3, 11, Theme::FG);
     }
@@ -91,13 +90,13 @@ void App::_drawHud(M5Canvas& c, uint32_t ms) const {
 
 // ── Scrollback ────────────────────────────────────────────────
 
-void App::_drawLog(M5Canvas& c) const {
+void App::_drawLog(TFT_eSprite& c) const {
     c.fillRect(0, LOG_TOP, SCR_W, LOG_BOT - LOG_TOP, Theme::BG);
 
-    c.setFont(&fonts::Font0);
+    c.setTextFont(1);
     c.setTextSize(1);
     c.setTextColor(Theme::FG, Theme::BG);
-    c.setTextDatum(lgfx::top_left);
+    c.setTextDatum(TL_DATUM);
 
     const int maxVis  = (LOG_BOT - LOG_TOP) / LINE_H;
     int       scrollSlot = 0;
@@ -120,14 +119,14 @@ void App::_drawLog(M5Canvas& c) const {
 
 // ── Input prompt ──────────────────────────────────────────────
 
-void App::_drawInput(M5Canvas& c) const {
+void App::_drawInput(TFT_eSprite& c) const {
     c.drawFastHLine(0, INPUT_DIVIDER_Y, SCR_W, Theme::DIM);
     c.fillRect(0, INPUT_DIVIDER_Y + 1, SCR_W, SCR_H - (INPUT_DIVIDER_Y + 1), Theme::BG);
 
-    c.setFont(&fonts::Font0);
+    c.setTextFont(1);
     c.setTextSize(1);
     c.setTextColor(Theme::FG, Theme::BG);
-    c.setTextDatum(lgfx::top_left);
+    c.setTextDatum(TL_DATUM);
 
     c.drawString("$ ", MARGIN, INPUT_Y);
 
@@ -149,8 +148,8 @@ void App::_drawInput(M5Canvas& c) const {
 
 // ── Menu overlay ──────────────────────────────────────────────
 
-void App::_drawMenuContent(M5Canvas& c) const {
-    c.setFont(&fonts::Font0);
+void App::_drawMenuContent(TFT_eSprite& c) const {
+    c.setTextFont(1);
     c.setTextSize(1);
 
     int nItems = 0, itemH = MENU_ITEM_H;
@@ -186,7 +185,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
         uint16_t col = active ? Theme::FG : Theme::DIM;
         if (hi) c.fillRect(0, y, SCR_W, itemH, Theme::PALE);
         c.setTextColor(col, hi ? Theme::PALE : Theme::BG);
-        c.setTextDatum(lgfx::middle_left);
+        c.setTextDatum(ML_DATUM);
         c.drawString(label, MARGIN + 6, y + itemH / 2 + 1);
     };
 
@@ -197,7 +196,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
             int y = menuTop + slot * itemH;
             if (_navHighlight == 0) c.fillRect(0,         y, SCR_W / 2, itemH, Theme::PALE);
             if (_navHighlight == 1) c.fillRect(SCR_W / 2, y, SCR_W / 2, itemH, Theme::PALE);
-            c.setTextDatum(lgfx::middle_center);
+            c.setTextDatum(MC_DATUM);
             c.setTextColor(hasPrev ? Theme::FG : Theme::DIM, (_navHighlight == 0) ? Theme::PALE : Theme::BG);
             c.drawString("<< prev", SCR_W / 4, y + itemH / 2 + 1);
             c.drawFastVLine(SCR_W / 2, y, itemH, Theme::DIM);
@@ -220,7 +219,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
             drawItem(slot, _activeSubCmd->subLabel(itemIdx), lit);
             if (act) {
                 int y = menuTop + slot * itemH;
-                c.setTextDatum(lgfx::middle_right);
+                c.setTextDatum(MR_DATUM);
                 c.drawString("*", SCR_W - MARGIN - 6, y + itemH / 2);
             }
         }
@@ -229,7 +228,7 @@ void App::_drawMenuContent(M5Canvas& c) const {
     c.drawFastHLine(0, INPUT_DIVIDER_Y, SCR_W, Theme::DIM);
     c.fillRect(0, INPUT_DIVIDER_Y + 1, SCR_W, SCR_H - (INPUT_DIVIDER_Y + 1), Theme::BG);
     c.setTextColor(Theme::FG, Theme::BG);
-    c.setTextDatum(lgfx::top_left);
+    c.setTextDatum(TL_DATUM);
     c.drawString("$ ", MARGIN, INPUT_Y);
 
     const char* inputText = (_menuState == MenuState::Sub && _activeSubCmd)

@@ -1,12 +1,12 @@
 #include "Stats.h"
+#include "../hw/Hw.h"
 #include <SD.h>
 #include <Arduino.h>
-#include <M5Unified.h>
 
 static constexpr const char* SAVE_PATH = "/netgotchi/stats";
 
 void Stats::load() {
-    File f = SD.open(SAVE_PATH, FILE_READ);
+    File f = Hw::sd.open(SAVE_PATH, FILE_READ);
     if (!f) return;
 
     uint32_t xp = 0, captures = 0, cracked = 0, discovers = 0;
@@ -23,7 +23,7 @@ void Stats::load() {
 }
 
 void Stats::save() const {
-    File f = SD.open(SAVE_PATH, FILE_WRITE);
+    File f = Hw::sd.open(SAVE_PATH, FILE_WRITE);
     if (!f) return;
 
     f.write((const uint8_t*)&_xp,        4);
@@ -34,10 +34,10 @@ void Stats::save() const {
 }
 
 int  Stats::battery()    const {
-    int b = M5.Power.getBatteryLevel();
+    int b = (int)Hw::axp.getBatteryLevel();
     return (b < 0) ? 0 : (b > 100 ? 100 : b);
 }
-bool Stats::isCharging() const { return M5.Power.isCharging(); }
+bool Stats::isCharging() const { return Hw::axp.isCharging(); }
 
 void Stats::onCapture() {
     _captures++;

@@ -6,12 +6,12 @@ static constexpr int HW = 11;  // head half-width:  edges at cx±11 (23px wide)
 static constexpr int HH = 9;   // head half-height: edges at cy±9  (19px tall)
 
 // 2px thick border — draw outer rect then inner rect one pixel inside
-static void _head(M5Canvas& c, int cx, int cy, uint16_t col) {
+static void _head(TFT_eSprite& c, int cx, int cy, uint16_t col) {
     c.drawRect(cx - HW,     cy - HH,     2*HW + 1,   2*HH + 1,   col);
     c.drawRect(cx - HW + 1, cy - HH + 1, 2*HW - 1,   2*HH - 1,   col);
 }
 
-void Virus::draw(M5Canvas& c, uint32_t ms, State state) {
+void Virus::draw(TFT_eSprite& c, uint32_t ms, State state) {
     c.fillRect(X0, Y0, SIDE, SIDE, Theme::BG);
     const int cx = X0 + SIDE / 2;
     const int cy = Y0 + SIDE / 2;

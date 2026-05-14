@@ -1,5 +1,6 @@
 #include "CrackCommand.h"
 #include "../../core/FastWpaCrack.h"
+#include "../../hw/Hw.h"
 #include <SD.h>
 #include <Arduino.h>
 #include <cstring>
@@ -111,7 +112,7 @@ void CrackCommand::onSubSelect(IMenuHost& host, int idx) {
 void CrackCommand::_loadPcapList() {
     _filePaths.clear();
     _fileNames.clear();
-    File dir = SD.open("/netgotchi/eapol");
+    File dir = Hw::sd.open("/netgotchi/eapol");
     if (!dir) return;
     bool isDir = false;
     String fname;
@@ -131,7 +132,7 @@ void CrackCommand::_loadPcapList() {
 void CrackCommand::_loadDictList() {
     _filePaths.clear();
     _fileNames.clear();
-    File dir = SD.open("/netgotchi/dictionaries");
+    File dir = Hw::sd.open("/netgotchi/dictionaries");
     if (!dir) return;
     bool isDir = false;
     String fname;
@@ -227,7 +228,7 @@ void CrackCommand::_crackProdTask(void* param) {
         }
     } else {
         char line[64];
-        File f = SD.open(ctx->wordlistPath, FILE_READ);
+        File f = Hw::sd.open(ctx->wordlistPath, FILE_READ);
         if (f) {
             ctx->fileSize = (uint32_t)f.size();
             while (f.available() && !ctx->stop && !ctx->found) {
@@ -336,12 +337,12 @@ void CrackCommand::update(IMenuHost& host, uint32_t ms) {
         snprintf(bssid, sizeof(bssid), "%02X%02X%02X%02X%02X%02X",
                  _crackCtx.hs.ap[0], _crackCtx.hs.ap[1], _crackCtx.hs.ap[2],
                  _crackCtx.hs.ap[3], _crackCtx.hs.ap[4], _crackCtx.hs.ap[5]);
-        SD.mkdir("/netgotchi/cracked");
+        Hw::sd.mkdir("/netgotchi/cracked");
         snprintf(savePath, sizeof(savePath), "/netgotchi/cracked/%.12s_%.32s.pass",
                  bssid, _crackCtx.hs.ssid);
         bool award = true;
-        if (SD.exists(savePath)) {
-            File rf = SD.open(savePath, FILE_READ);
+        if (Hw::sd.exists(savePath)) {
+            File rf = Hw::sd.open(savePath, FILE_READ);
             if (rf) {
                 char existing[64] = {};
                 int n = rf.readBytes(existing, (int)strlen(_crackCtx.foundPass) + 1);
@@ -351,7 +352,7 @@ void CrackCommand::update(IMenuHost& host, uint32_t ms) {
                     award = false;
             }
         }
-        File pf = SD.open(savePath, FILE_WRITE);
+        File pf = Hw::sd.open(savePath, FILE_WRITE);
         if (pf) { pf.print(_crackCtx.foundPass); pf.close(); }
         if (award) host.onCracked();
         row("ssid", _crackCtx.hs.ssid);

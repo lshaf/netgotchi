@@ -1,4 +1,5 @@
 #include "FastWpaCrack.h"
+#include "../hw/Hw.h"
 #include <cstring>
 #include <SD.h>
 
@@ -271,7 +272,7 @@ static int pcapFindSnap(const uint8_t *frm, uint16_t len) {
 
 bool fast_pcap_parse(const char *path, CrackHandshake &hs, int *reason) {
     memset(&hs, 0, sizeof(hs));
-    File f = SD.open(path, FILE_READ);
+    File f = Hw::sd.open(path, FILE_READ);
     if (!f) { if (reason) *reason = 1; return false; }
 
     uint8_t gh[24]; uint32_t linktype = 105;

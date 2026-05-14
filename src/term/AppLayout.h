@@ -34,7 +34,7 @@ namespace AppLayout {
     constexpr int LOG_MAXW = (SCR_W - 2 * MARGIN) / CHAR_W;
     constexpr int LOG_BODY = LOG_MAXW - 2;
 
-    constexpr uint32_t TYPE_STEP_MS = 35;
+    constexpr uint32_t TYPE_STEP_MS = 15;
     constexpr uint32_t TYPE_HOLD_MS = 400;
     constexpr uint32_t CURSOR_MS    = 480;
 

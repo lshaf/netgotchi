@@ -3,7 +3,7 @@
 #include "../net/WifiGuard.h"
 #include "Stats.h"
 #include "command/MenuCommand.h"
-#include <M5GFX.h>
+#include <TFT_eSPI.h>
 
 class App : public IMenuHost {
 public:
@@ -36,7 +36,7 @@ private:
     static constexpr uint8_t KIND_CMD = 0;
     static constexpr uint8_t KIND_OUT = 1;
 
-    M5Canvas*  _canvas = nullptr;
+    TFT_eSprite*  _canvas = nullptr;
     WiFiHunter _hunter;
     WifiGuard  _guard;
     Stats      _stats;
@@ -95,8 +95,8 @@ private:
     void _updateTyping  (uint32_t ms);
     void _handleTouch   (uint32_t ms);
 
-    void _drawHud         (M5Canvas& c, uint32_t ms) const;
-    void _drawLog         (M5Canvas& c) const;
-    void _drawInput       (M5Canvas& c) const;
-    void _drawMenuContent (M5Canvas& c) const;
+    void _drawHud         (TFT_eSprite& c, uint32_t ms) const;
+    void _drawLog         (TFT_eSprite& c) const;
+    void _drawInput       (TFT_eSprite& c) const;
+    void _drawMenuContent (TFT_eSprite& c) const;
 };

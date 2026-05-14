@@ -1,10 +1,10 @@
 #include "App.h"
 #include "AppLayout.h"
 #include "../net/WebFileServer.h"
+#include "../hw/Hw.h"
 #include "Virus.h"
 #include "Theme.h"
 #include "../core/RandomSeed.h"
-#include <M5Unified.h>
 #include <Arduino.h>
 #include <SD.h>
 #include <esp_heap_caps.h>
@@ -20,8 +20,6 @@
 #include "command/WebServerCommand.h"
 
 using namespace AppLayout;
-
-static constexpr int SD_CS = 4;
 
 static WebFileServer s_webserver;
 
@@ -80,19 +78,17 @@ void App::init() {
 
     if (psramFound()) psramInit();
 
-    auto cfg = M5.config();
-    M5.begin(cfg);
-    M5.Display.setBrightness(Theme::brightness());
+    bool sdOk = Hw::begin();
+    Hw::axp.setBacklight(Theme::brightness());
 
-    _canvas = new M5Canvas(&M5.Display);
+    _canvas = new TFT_eSprite(&Hw::tft);
     _canvas->setColorDepth(16);
     _canvas->createSprite(SCR_W, SCR_H);
 
-    bool sdOk = SD.begin(SD_CS);
     if (sdOk) {
-        SD.mkdir("/netgotchi");
-        SD.mkdir("/netgotchi/eapol");
-        SD.mkdir("/netgotchi/dictionaries");
+        Hw::sd.mkdir("/netgotchi");
+        Hw::sd.mkdir("/netgotchi/eapol");
+        Hw::sd.mkdir("/netgotchi/dictionaries");
     }
 
     _stats.load();
@@ -115,7 +111,7 @@ void App::init() {
     _qPushCmd("boot netgotchi");
     _qPushOut("net_gotchi term v1.0");
     _qPushOut("psram %ukb free", (unsigned)(ESP.getFreePsram() / 1024));
-    if (sdOk) _qPushOut("sd ok %llumb", SD.totalBytes() / (1024 * 1024));
+    if (sdOk) _qPushOut("sd ok %llumb", Hw::sdTotalBytes() / (1024 * 1024));
     else      _qPushOut("sd: mount failed");
     _qPushOut("wifi ready.");
     _qPushOut("ready.");
@@ -237,36 +233,36 @@ void App::_updateTyping(uint32_t ms) {
 // ── Touch handling ────────────────────────────────────────────
 
 void App::_handleTouch(uint32_t ms) {
-    auto t = M5.Touch.getDetail();
+    const auto& t = Hw::touchState;
 
     // Reset idle timer on any touch activity
-    if (t.isPressed() || t.wasPressed() || t.wasReleased()) {
+    if (t.isPressed || t.wasPressed || t.wasReleased) {
         _lastTouchMs = ms;
     }
 
     // Wake display only on a fresh tap — not on the ongoing press that turned it off
-    if (t.wasPressed() && _displayOff) {
-        M5.Display.setBrightness(Theme::brightness());
+    if (t.wasPressed && _displayOff) {
+        Hw::axp.setBacklight(Theme::brightness());
         _displayOff = false;
         return;
     }
 
     if (_menuState == MenuState::PowerWait) return;
 
-    bool pressed  = t.isPressed();
-    bool released = t.wasReleased();
+    bool pressed  = t.isPressed;
+    bool released = t.wasReleased;
     int  tx = t.x, ty = t.y;
 
     // Display-off icon tap
-    if (t.wasPressed() && tx >= DISP_BTN_X && tx < DISP_BTN_X + DISP_BTN_W
+    if (t.wasPressed && tx >= DISP_BTN_X && tx < DISP_BTN_X + DISP_BTN_W
             && ty >= DISP_BTN_Y && ty < DISP_BTN_Y + DISP_BTN_H) {
-        M5.Display.setBrightness(0);
+        Hw::axp.setBacklight(0);
         _displayOff = true;
         return;
     }
 
     if (_menuState == MenuState::Closed) {
-        if (t.wasPressed() && tx >= Virus::X0 && ty >= 0 && ty < HEADER_DIVIDER_Y) {
+        if (t.wasPressed && tx >= Virus::X0 && ty >= 0 && ty < HEADER_DIVIDER_Y) {
             _menuState      = MenuState::Root;
             _menuHighlight  = -1;
             _menuJustOpened = true;
@@ -371,20 +367,20 @@ void App::_handleTouch(uint32_t ms) {
 // ── Main loop ─────────────────────────────────────────────────
 
 void App::update() {
-    M5.update();
+    Hw::update();
     uint32_t ms = millis();
 
     if (_menuState == MenuState::PowerWait && ms - _powerOffMs >= 2000) {
         _stats.save();
-        M5.Display.fillScreen(0);
-        M5.Power.powerOff();
+        Hw::tft.fillScreen(TFT_BLACK);
+        Hw::axp.powerOff();
         while (true) { delay(1000); }
     }
 
     uint16_t offSecs = Theme::displayOffSecs();
     if (offSecs > 0 && !_displayOff) {
         if (ms - _lastTouchMs >= (uint32_t)offSecs * 1000u) {
-            M5.Display.setBrightness(0);
+            Hw::axp.setBacklight(0);
             _displayOff = true;
         }
     }

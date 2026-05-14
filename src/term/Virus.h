@@ -1,12 +1,12 @@
 #pragma once
-#include <M5GFX.h>
+#include <TFT_eSPI.h>
 #include <cstdint>
 
 class Virus {
 public:
     enum class State : uint8_t { Idle, Active, Guard, Decrypting, Sleep, Trap };
 
-    static void draw(M5Canvas& c, uint32_t ms, State state);
+    static void draw(TFT_eSprite& c, uint32_t ms, State state);
 
     static constexpr int BAR_H = 15;
     static constexpr int BAR_GAP = 2;

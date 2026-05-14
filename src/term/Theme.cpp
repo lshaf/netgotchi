@@ -1,5 +1,5 @@
 #include "Theme.h"
-#include <M5Unified.h>
+#include "../hw/Hw.h"
 #include <SD.h>
 #include <Arduino.h>
 
@@ -46,7 +46,7 @@ void Theme::apply(int idx) {
 
 void Theme::applyBrightness(uint8_t b) {
     _brightness = b;
-    M5.Display.setBrightness(b);
+    Hw::axp.setBacklight(b);
     save();
 }
 
@@ -56,7 +56,7 @@ void Theme::applyDisplayOff(uint16_t secs) {
 }
 
 void Theme::save() {
-    File f = SD.open(CONFIG_PATH, FILE_WRITE);
+    File f = Hw::sd.open(CONFIG_PATH, FILE_WRITE);
     if (!f) return;
     uint32_t magic = CONFIG_MAGIC;
     uint8_t  theme = (uint8_t)_idx;
@@ -68,7 +68,7 @@ void Theme::save() {
 }
 
 void Theme::load() {
-    File f = SD.open(CONFIG_PATH, FILE_READ);
+    File f = Hw::sd.open(CONFIG_PATH, FILE_READ);
     if (!f) return;
 
     uint32_t magic = 0;
@@ -95,6 +95,6 @@ void Theme::load() {
     FG   = e.fg;
     PALE = e.pale;
     DIM  = e.dim;
-    M5.Display.setBrightness(bright);
+    Hw::axp.setBacklight(bright);
 
 }

@@ -1,4 +1,5 @@
 #include "WiFiHunter.h"
+#include "../hw/Hw.h"
 #include <Arduino.h>
 #include <WiFi.h>
 #include <SD.h>
@@ -321,8 +322,8 @@ void WiFiHunter::_ensurePcapWithBeacon(ApInfo& ap, int idx) {
     char path[64];
     _buildFilePath(path, sizeof(path), ap);
 
-    if (!SD.exists(path)) {
-        File pcap = SD.open(path, FILE_WRITE);
+    if (!Hw::sd.exists(path)) {
+        File pcap = Hw::sd.open(path, FILE_WRITE);
         if (!pcap) return;
         _writePcapHeader(pcap);
         _appendPcapFrame(pcap, _beaconData[idx], _beaconLen[idx]);
@@ -338,7 +339,7 @@ void WiFiHunter::_flushPendingEapol(ApInfo& ap, int idx) {
 
     char path[64];
     _buildFilePath(path, sizeof(path), ap);
-    File pcap = SD.open(path, FILE_APPEND);
+    File pcap = Hw::sd.open(path, FILE_APPEND);
     if (!pcap) return;
 
     for (int i = 0; i < _pendingEapolCount[idx]; i++) {
@@ -473,7 +474,7 @@ void WiFiHunter::_processEapol(const RawFrame& f) {
     char path[64];
     _buildFilePath(path, sizeof(path), *ap);
     {
-        File pcap = SD.open(path, FILE_APPEND);
+        File pcap = Hw::sd.open(path, FILE_APPEND);
         if (pcap) {
             _appendPcapFrame(pcap, f.data, f.len);
             pcap.close();
@@ -575,7 +576,7 @@ void WiFiHunter::_buildFilePath(char* buf, int bufLen, const ApInfo& ap) {
 }
 
 bool WiFiHunter::_pcapIsCompletePath(const char* path) {
-    File f = SD.open(path, FILE_READ);
+    File f = Hw::sd.open(path, FILE_READ);
     if (!f) return false;
 
     if ((uint32_t)f.size() <= sizeof(PcapGlobalHdr)) { f.close(); return false; }
