@@ -19,11 +19,14 @@ public:
     }
 
     void startHardware() override {
-        WiFi.softAP(WebFileServer::AP_SSID);
+        // Re-broadcast the AP visibly. WiFiHunter::init() keeps it hidden by default.
+        WiFi.softAP(WebFileServer::AP_SSID, nullptr, 1, /*ssid_hidden=*/0);
     }
 
     void stopService(IMenuHost& host) override {
-        WiFi.softAPdisconnect(true);
+        // Hide the AP again instead of tearing it down — hunter/deauth still
+        // need APSTA mode active for raw-frame injection.
+        WiFi.softAP(WebFileServer::AP_SSID, nullptr, 1, /*ssid_hidden=*/1);
         host.cmdPush("service webserver stop");
     }
 

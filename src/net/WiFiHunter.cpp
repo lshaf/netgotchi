@@ -1,4 +1,5 @@
 #include "WiFiHunter.h"
+#include "WebFileServer.h"
 #include "../hw/Hw.h"
 #include <Arduino.h>
 #include <WiFi.h>
@@ -42,7 +43,11 @@ struct PcapRecHdr {
 void WiFiHunter::init() {
     _instance = this;
 
+    // APSTA gives us raw-frame injection. Without an explicit softAP() the
+    // stack still broadcasts a default "ESP_xxxxxx" AP — bring it up hidden
+    // so the device doesn't advertise itself unless WebServerCommand asks.
     WiFi.mode(WIFI_MODE_APSTA);
+    WiFi.softAP(WebFileServer::AP_SSID, nullptr, _channel, /*ssid_hidden=*/1);
 
     esp_wifi_set_promiscuous_rx_cb(_promiscCb);
     esp_wifi_set_promiscuous(true);
