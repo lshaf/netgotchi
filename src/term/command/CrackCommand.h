@@ -70,6 +70,7 @@ private:
         volatile uint32_t tested           = 0;
         volatile uint32_t bytesDone        = 0;
         volatile uint32_t fileSize         = 0;
+        volatile uint32_t lastReadMs       = 0;  // millis() of last SD chunk read
     };
 
     enum class CrackState : uint8_t { Idle, Running };

@@ -177,7 +177,10 @@ bool CrackCommand::progressLine(char* buf, int len, uint32_t ms) const {
             else          snprintf(etaBuf, sizeof(etaBuf), " %lum%02lus",  (unsigned long)(eta / 60), (unsigned long)(eta % 60));
         }
     }
-    snprintf(buf, (size_t)len, "[%s] %lu%%%s%s", bar, (unsigned long)pct, speedBuf, etaBuf);
+    // 1s sticky tag: "rd" while we're fetching from SD, "cr" otherwise.
+    // SD reads are bursty (~one chunk per few seconds while queue drains).
+    const char* tag = (_crackCtx.lastReadMs && (ms - _crackCtx.lastReadMs) < 1000) ? "rd" : "cr";
+    snprintf(buf, (size_t)len, "[%s] %s %lu%%%s%s", bar, tag, (unsigned long)pct, speedBuf, etaBuf);
     return true;
 }
 
@@ -201,7 +204,7 @@ void CrackCommand::_crackWorkerTask(void* param) {
         __atomic_fetch_add(&ctx->tested, 1, __ATOMIC_RELAXED);
         // Core 0 has no Arduino loop — IDLE task never runs unless we yield.
         // Without this yield the Task Watchdog fires after ~5s.
-        if (core == 0) vTaskDelay(pdMS_TO_TICKS(1));
+        if (core == 0) vTaskDelay(1);  // 1 tick — always yields regardless of TICK_RATE_HZ
     }
     xSemaphoreGive(ctx->doneSem);
     vTaskDelete(NULL);
@@ -227,17 +230,45 @@ void CrackCommand::_crackProdTask(void* param) {
             ctx->bytesDone = (uint32_t)(i + 1);
         }
     } else {
-        char line[64];
+        // Chunked read: every f.read() goes through MisoDcGuard (mutex + GPIO
+        // matrix toggle). readBytesUntil() reads one byte per call ⇒ enormous
+        // per-byte overhead. Read 4KB blocks and split lines in RAM instead.
         File f = Hw::sd.open(ctx->wordlistPath, FILE_READ);
         if (f) {
             ctx->fileSize = (uint32_t)f.size();
-            while (f.available() && !ctx->stop && !ctx->found) {
-                size_t n = f.readBytesUntil('\n', line, 63);
-                line[n] = '\0';
-                while (n > 0 && (line[n-1] == '\r' || line[n-1] == '\n')) line[--n] = '\0';
+            // Smaller chunks → shorter HSPI bus monopolisation per read so
+            // the main loop's TFT push isn't starved. 1 KB ≈ 0.2 ms at 40 MHz.
+            constexpr size_t CHUNK = 1024;
+            char chunk[CHUNK];
+            size_t leftover = 0;
+            char line[64];
+            while (!ctx->stop && !ctx->found) {
+                int got = f.read((uint8_t*)chunk + leftover, CHUNK - leftover);
+                ctx->lastReadMs = millis();
+                if (got < 0) got = 0;
+                size_t total = leftover + (size_t)got;
+                if (total == 0) break;
+                size_t lineStart = 0;
+                bool eof = (got == 0) || ((size_t)got < CHUNK - leftover && !f.available());
+                for (size_t i = 0; i < total; i++) {
+                    bool atEnd = (i == total - 1) && eof && chunk[i] != '\n';
+                    if (chunk[i] == '\n' || atEnd) {
+                        size_t end = i + (atEnd ? 1 : 0);
+                        size_t n = end - lineStart;
+                        if (n > 0 && n <= 63) {
+                            memcpy(line, chunk + lineStart, n);
+                            line[n] = '\0';
+                            while (n > 0 && (line[n-1] == '\r' || line[n-1] == '\n'))
+                                line[--n] = '\0';
+                            if (n >= 8 && n <= 63) enqueue(line, (uint8_t)n);
+                        }
+                        lineStart = i + 1;
+                    }
+                }
                 ctx->bytesDone = (uint32_t)f.position();
-                if (n < 8 || n > 63) continue;
-                enqueue(line, (uint8_t)n);
+                leftover = total - lineStart;
+                if (leftover > 0) memmove(chunk, chunk + lineStart, leftover);
+                if (eof) break;
             }
             f.close();
         }
