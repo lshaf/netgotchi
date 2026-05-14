@@ -30,11 +30,12 @@ public:
     delay(50);
 
     // Set output values BEFORE changing direction so pins never glitch LOW.
-    // Port 0: touch deassert (P0.0), BUS_EN ON (P0.1) for Grove A 5V, amp OFF (P0.2)
-    _write(0x02, 0b00000011);
+    // Port 0: touch deassert (P0.0), BUS_EN OFF (P0.1) at boot, amp OFF (P0.2).
     // Port 1: P1.0/P1.1 HIGH (internal bus), LCD_RST asserted LOW (P1.5=0),
-    // BOOST_EN ON (P1.7=1) so Grove Port A actually gets 5V at boot.
-    _write(0x03, 0b10000011);
+    // BOOST_EN OFF (P1.7=0) — the 5V boost is a heavy current draw on a flat
+    // battery and Grove 5V isn't needed for boot. setBus5V() can enable later.
+    _write(0x02, 0b00000001);
+    _write(0x03, 0b00000011);
 
     // GCR: push-pull mode for Port 0 (Port 1 is always push-pull)
     _write(0x11, 0b00010000);

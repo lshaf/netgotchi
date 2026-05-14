@@ -79,7 +79,6 @@ void App::init() {
     if (psramFound()) psramInit();
 
     bool sdOk = Hw::begin();
-    Hw::axp.setBacklight(Theme::brightness());
 
     _canvas = new TFT_eSprite(&Hw::tft);
     _canvas->setColorDepth(16);
@@ -90,6 +89,15 @@ void App::init() {
         Hw::sd.mkdir("/netgotchi/eapol");
         Hw::sd.mkdir("/netgotchi/dictionaries");
     }
+
+    // Ramp backlight 0 → target over ~500 ms. Smooths the SY7088 boost inrush
+    // so a low-voltage battery doesn't brown out at first power-on.
+    uint8_t target = Theme::brightness();
+    for (uint8_t b = 0; b < target; b += 5) {
+        Hw::axp.setBacklight(b);
+        delay(25);
+    }
+    Hw::axp.setBacklight(target);
 
     _stats.load();
     Theme::load();

@@ -40,9 +40,11 @@ public:
     // DLDO1 = 3.3V  (SY7088 boost input → LCD backlight LEDs)
     _write(0x99, 28);
 
-    // ── Enable LDOs ───────────────────────────────────────────
+    // ── Enable LDOs (DLDO1 off — backlight is enabled later in setBacklight) ─
     // bit7=DLDO1 bit5=BLDO1 bit4=BLDO2 bit3=ALDO1 bit2=ALDO2 bit1=ALDO3 bit0=ALDO4
-    _write(0x90, 0xBF);
+    // Holding DLDO1 off until first setBacklight() avoids the boost inrush
+    // current during boot on a near-flat battery (which otherwise browns out).
+    _write(0x90, 0x3F);
   }
 
   // Battery level 0–100 from fuel gauge register
